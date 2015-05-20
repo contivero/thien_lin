@@ -1,3 +1,4 @@
+*.bmp
 # Object files
 *.o
 *.ko
