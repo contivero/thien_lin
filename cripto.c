@@ -5,14 +5,14 @@
 #include <string.h>
 #include <unistd.h>
 
-#define BMP_HEADER_SIZE			14
-#define DIB_HEADER_SIZE_OFFSET	14
-#define FILESIZE_OFFSET			2	
-#define FILESIZE_FIELD_SIZE		4
-#define WIDTH_OFFSET			18
-#define WIDTH_FIELD_SIZE		4
-#define HEIGHT_OFFSET			22
-#define HEIGHT_FIELD_SIZE		4
+#define BMP_HEADER_SIZE        14
+#define DIB_HEADER_SIZE_OFFSET 14
+#define FILESIZE_OFFSET        2	
+#define FILESIZE_FIELD_SIZE    4
+#define WIDTH_OFFSET           18
+#define WIDTH_FIELD_SIZE       4
+#define HEIGHT_OFFSET          22
+#define HEIGHT_FIELD_SIZE      4
 
 typedef enum {
 	BITMAPCOREHEADER   = 12,
@@ -37,38 +37,38 @@ typedef struct {
 
 /* 40 bytes BITMAPINFOHEADER */
 typedef struct {
-  uint32_t size;		/* the size of this header (40 bytes) */
-  uint32_t width;		/* the bitmap width in pixels */
-  uint32_t height;		/* the bitmap height in pixels */
-  uint16_t nplanes;		/* number of color planes used; Must set to 1 */
-  uint16_t depth;		/* bpp number. Usually: 1, 4, 8, 16, 24 or 32 */
-  uint32_t compression;	/* compression method used */
+  uint32_t size;        /* the size of this header (40 bytes) */
+  uint32_t width;       /* the bitmap width in pixels */
+  uint32_t height;      /* the bitmap height in pixels */
+  uint16_t nplanes;     /* number of color planes used; Must set to 1 */
+  uint16_t depth;       /* bpp number. Usually: 1, 4, 8, 16, 24 or 32 */
+  uint32_t compression; /* compression method used */
   uint32_t rawbmpsize;  /* size of the raw bitmap (pixel) data */
-  uint32_t hres;		/* horizontal resolution (pixel per meter) */
-  uint32_t vres;		/* vertical resolution (pixel per meter) */
-  uint32_t ncolors;		/* number of colors in the palette. 0 means 2^n */
-  uint32_t nimpcolors;	/* number of important colors used, usually ignored */
+  uint32_t hres;        /* horizontal resolution (pixel per meter) */
+  uint32_t vres;        /* vertical resolution (pixel per meter) */
+  uint32_t ncolors;     /* number of colors in the palette. 0 means 2^n */
+  uint32_t nimpcolors;  /* number of important colors used, usually ignored */
 } DIBheader;
 
 typedef struct {
-	BMPheader bmpheader;
-	DIBheader dibheader;
-	uint8_t *palette;
-	uint8_t *data; /* image pixels */
+	BMPheader bmpheader; /* 14 bytes bmp starting header */
+	DIBheader dibheader; /* 40 bytes dib header */
+	uint8_t *palette;    /* color palette */
+	uint8_t *data;       /* image pixels */
 } Bitmap;
 
 /* prototypes */ 
-static void		randomize(int num);
-static double	randnormalize(void);
-static long int	randint(long int max);
-static uint32_t	bmpfilewidth(FILE *fp);
-static uint32_t	bmpfileheight(FILE *fp);
-static void		*newbitmap(uint32_t width, uint32_t height);
-static void		*freebitmap(Bitmap *bp);
-static void		die(const char *errstr, ...);
-static void		*xmalloc(size_t size);
-static FILE		*xfopen(const char *filename, const char *mode);
-static void		xfclose(FILE *fp);
+static void     randomize(int num);
+static double   randnormalize(void);
+static long int randint(long int max);
+static uint32_t bmpfilewidth(FILE *fp);
+static uint32_t bmpfileheight(FILE *fp);
+static void     *newbitmap(uint32_t width, uint32_t height);
+static void     *freebitmap(Bitmap *bp);
+static void     die(const char *errstr, ...);
+static void     *xmalloc(size_t size);
+static FILE     *xfopen(const char *filename, const char *mode);
+static void     xfclose(FILE *fp);
 static uint32_t get32bitsfromheader(FILE *fp, char offset);
 
 void
@@ -243,6 +243,7 @@ void
 changebmppixel(FILE *fp, int pixel, char bit){
 	uint8_t byte;
 
+	// TODO
 	//fseek(fp, HEIGHT_OFFSET, SEEK_SET);
 	fread(&byte, 1, 1, fp);
 	byte &= bit;
