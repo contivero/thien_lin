@@ -1,18 +1,15 @@
+#include <unistd.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define BMP_HEADER_SIZE        14
 #define DIB_HEADER_SIZE_OFFSET 14
 #define FILESIZE_OFFSET        2	
-#define FILESIZE_FIELD_SIZE    4
 #define WIDTH_OFFSET           18
-#define WIDTH_FIELD_SIZE       4
 #define HEIGHT_OFFSET          22
-#define HEIGHT_FIELD_SIZE      4
 
 typedef enum {
 	BITMAPCOREHEADER   = 12,
@@ -60,16 +57,17 @@ typedef struct {
 /* prototypes */ 
 static void     randomize(int num);
 static double   randnormalize(void);
-static long int randint(long int max);
+static long     randint(long int max);
+static uint32_t bmpfilesize(FILE *fp);
 static uint32_t bmpfilewidth(FILE *fp);
 static uint32_t bmpfileheight(FILE *fp);
-static void     *newbitmap(uint32_t width, uint32_t height);
-static void     *freebitmap(Bitmap *bp);
+static uint32_t get32bitsfromheader(FILE *fp, char offset);
+static void     freebitmap(Bitmap *bp);
 static void     die(const char *errstr, ...);
 static void     *xmalloc(size_t size);
 static FILE     *xfopen(const char *filename, const char *mode);
 static void     xfclose(FILE *fp);
-static uint32_t get32bitsfromheader(FILE *fp, char offset);
+static void     bmptofile(Bitmap *bp, const char *filename);
 
 void
 die(const char *errstr, ...) {
@@ -103,17 +101,8 @@ xfopen (const char *filename, const char *mode){
 
 void
 xfclose (FILE *fp){
-	if(fclose(fp) == EOF){
-		char path[1024];
-		char filename[1024];
-		int fd = fileno(fp);
-		/* Read out the link to our file descriptor. */
-		sprintf(path, "/proc/self/fd/%d", fd);
-		memset(filename, 0, sizeof(filename));
-		readlink(path, filename, sizeof(filename)-1);
-
-		die("couldn't close %s\n", filename);
-	}
+	if(fclose(fp) == EOF)
+		die("couldn't close file\n");
 }
 
 void 
@@ -149,14 +138,6 @@ bmpfilewidth(FILE *fp){
 }
 
 uint32_t
-bmpfiledibheadersize(FILE *fp){
-	uint32_t size = get32bitsfromheader(fp, DIB_HEADER_SIZE_OFFSET);
-	if(size != BITMAPINFOHEADER)
-		die("unsupported dib header format\n");
-	return size;
-}
-
-uint32_t
 bmpfileheight(FILE *fp){
 	return get32bitsfromheader(fp, HEIGHT_OFFSET);
 }
@@ -166,31 +147,34 @@ bmpfilesize(FILE *fp){
 	return get32bitsfromheader(fp, FILESIZE_OFFSET);
 }
 
-void *
-newbitmap(uint32_t width, uint32_t height){
-	Bitmap *bp = xmalloc(sizeof(*bp));
-	bp->data   = xmalloc(width * height);
-	return bp;
+uint32_t
+bmpfiledibheadersize(FILE *fp){
+	uint32_t size = get32bitsfromheader(fp, DIB_HEADER_SIZE_OFFSET);
+	if(size != BITMAPINFOHEADER)
+		die("unsupported dib header format\n");
+	return size;
 }
 
-void *
+
+void
 freebitmap(Bitmap *bp){
+	free(bp->palette);
 	free(bp->data);
 	free(bp);
 }
 
 void
 bmpheaderdebug(Bitmap *bp){
-	printf("ID: %c%c\t\t size: %d\t\t offset: %d\n", bp->bmpheader.id[0],
+	printf("ID: %c%-15c size: %-16d offset: %-16d\n", bp->bmpheader.id[0],
 	bp->bmpheader.id[1], bp->bmpheader.size, bp->bmpheader.offset);
 }
 
 void
 dibheaderdebug(Bitmap *bp){
-	printf("dibsize: %d\t\t width: %d\t\t height: %d\n" 
-			"nplanes: %d\t\t depth: %d\t\t compression:%d\n"
-			"rawbmpsize: %d\t\t hres: %d\t\t vres:%d\n"
-			"ncolors: %d\t\t nimpcolors: %d\n", bp->dibheader.size,
+	printf("dibsize: %-16d width: %-16d height: %-16d\n" 
+			"nplanes: %-16d depth: %-16d compression:%-16d\n"
+			"rawbmpsize: %-16d hres: %-16d vres:%-16d\n"
+			"ncolors: %-16d nimpcolors: %-16d\n", bp->dibheader.size,
 			bp->dibheader.width, bp->dibheader.height, bp->dibheader.nplanes,
 			bp->dibheader.depth, bp->dibheader.compression,
 			bp->dibheader.rawbmpsize, bp->dibheader.hres, bp->dibheader.vres,
@@ -235,8 +219,16 @@ bmpfromfile(char *filename){
 }
 
 void
-bmptofile(Bitmap *bp){
-	// TODO
+bmptofile(Bitmap *bp, const char *filename){
+	FILE *fp = xfopen(filename, "w");
+	int palettesize = bp->bmpheader.offset - (BMP_HEADER_SIZE + bp->dibheader.size);
+	int imagesize = bp->bmpheader.size - bp->bmpheader.offset;
+
+	fwrite(&bp->bmpheader, sizeof(bp->bmpheader), 1, fp);
+	fwrite(&bp->dibheader, sizeof(bp->dibheader), 1, fp);
+	fwrite(bp->palette, palettesize, 1, fp);
+	fwrite(bp->data, imagesize, 1, fp);
+	xfclose(fp);
 }
 
 void
@@ -264,4 +256,6 @@ main(int argc, char *argv[]){
 
 	filename = argv[1];
 	Bitmap *bp = bmpfromfile(filename);
+	bmptofile(bp, "output.bmp");
+	freebitmap(bp);
 }
