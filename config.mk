@@ -4,7 +4,7 @@
 #CFLAGS  = -std=c99 -pedantic -Ofast \
 
 CC      = gcc
-LDFLAGS = -s
+LDFLAGS = -lm -s
 CFLAGS  = -std=c99 -pedantic -O0 \
 
 #CFLAGS = -static -std=c99 -pedantic -Wall -Wextra -Wunused-macros \

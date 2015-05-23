@@ -8,21 +8,11 @@
 
 #define BMP_HEADER_SIZE        14
 #define DIB_HEADER_SIZE_OFFSET 14
+#define DIB_HEADER_SIZE        40
 #define FILESIZE_OFFSET        2	
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
-#define MOD_PRIME              251
-
-typedef enum {
-	BITMAPCOREHEADER   = 12,
-	OS21XBITMAPHEADER  = 12,
-	OS22XBITMAPHEADER  = 64,
-	BITMAPINFOHEADER   = 40,
-	BITMAPV2INFOHEADER = 52,
-	BITMAPV3INFOHEADER = 56,
-	BITMAPV4HEADER     = 108,
-	BITMAPV5HEADER     = 124,
-} DIBheadersize;
+#define PRIME_MOD              251
 
 #pragma pack(1)
 typedef struct {
@@ -50,16 +40,11 @@ typedef struct {
 } DIBheader;
 
 typedef struct {
-	BMPheader bmpheader; /* 14 bytes bmp starting header */
-	DIBheader dibheader; /* 40 bytes dib header */
-	uint8_t *palette;    /* color palette */
-	uint8_t *data;       /* image pixels */
+	BMPheader bmpheader;  /* 14 bytes bmp starting header */
+	DIBheader dibheader;  /* 40 bytes dib header */
+	uint8_t *palette;     /* color palette */
+	uint8_t *data;        /* image pixels */
 } Bitmap;
-
-typedef struct{
-	int *coeff;
-	int degree;
-} Polynomial;
 
 /* prototypes */ 
 static void       die(const char *errstr, ...);
@@ -69,9 +54,7 @@ static void       xfclose(FILE *fp);
 static void       usage(void);
 static long       randint(long int max);
 static double     randnormalize(void);
-static Polynomial *newpolynomial(int *coeff, int degree);
-static void       freepolynomial(Polynomial *p);
-static int        evaluate(Polynomial *p, int value);
+static int        generatepixel(uint8_t *coeff, int degree, int value);
 static uint32_t   get32bitsfromheader(FILE *fp, char offset);
 static uint32_t   bmpfilesize(FILE *fp);
 static uint32_t   bmpfilewidth(FILE *fp);
@@ -82,10 +65,10 @@ static Bitmap     *bmpfromfile(char *filename);
 static void       bmptofile(Bitmap *bp, const char *filename);
 static int        bmpimagesize(Bitmap *bp);
 static int        bmppalettesize(Bitmap *bp);
+static Bitmap     *formshadows(Bitmap *bp, int r, int n);
 
 /* globals */
-static char *arg0;            /* program name */
-static int 	sharedpixels = 0; /* shared pixels */
+static char *arg0; /* program name for usage() */
 
 void
 die(const char *errstr, ...) {
@@ -138,32 +121,6 @@ randint(long int max){
 	return (long) (randnormalize()*(max+1)); /*returns num in [0,max]*/
 } 
 
-Polynomial *
-newpolynomial(int *coeff, int degree){
-	Polynomial *p = xmalloc(sizeof(*p));
-	p->coeff      = coeff;
-	p->degree     = degree;
-
-	return p;
-}
-
-void
-freepolynomial(Polynomial *p){
-	free(p->coeff);
-	free(p);
-}
-
-int
-evaluate(Polynomial *p, int value){
-	int i; 
-	long ret = 0;
-
-	for(i = 0; i < p->degree; i++)
-		ret += p->coeff[i] * powl(value,i);
-
-	return ret % MOD_PRIME;
-}
-
 uint32_t
 get32bitsfromheader(FILE *fp, char offset){
 	uint32_t value;
@@ -194,7 +151,7 @@ bmpfileheight(FILE *fp){
 uint32_t
 bmpfiledibheadersize(FILE *fp){
 	uint32_t size = get32bitsfromheader(fp, DIB_HEADER_SIZE_OFFSET);
-	if(size != BITMAPINFOHEADER)
+	if(size != DIB_HEADER_SIZE)
 		die("unsupported dib header format\n");
 	return size;
 }
@@ -295,7 +252,7 @@ void
 permutepixels(Bitmap *bp){
 	int i, j, temp;
 	uint8_t *p = bp->data;
-	srand(10); /* FIXME preguntar sobre la "key" de permutación! */
+	srand(10); /* TODO preguntar sobre la "key" de permutación! */
 
 	for(i = bmpimagesize(bp)-1; i > 1; i--){
 		j = randint(i);
@@ -305,23 +262,71 @@ permutepixels(Bitmap *bp){
 	}
 }
 
+/* uses coeff[0] to coeff[degree] to evaluate the corresponding section
+ * polynomial and generate a pixel for a shadow image */
+int
+generatepixel(uint8_t *coeff, int degree, int value){
+	int i; 
+	long ret = 0;
+
+	for(i = 0; i <= degree; i++)
+		ret += coeff[i] * powl(value,i);
+
+	return ret % PRIME_MOD;
+}
+
+/* TODO limpiar función para que sea puntero a punteros de Bitmap
+ * como esta actualmente tiene memory leaks!
+ */
+Bitmap *
+formshadows(Bitmap *bp, int r, int n){
+	int i = 0;
+	int j = 0;
+	int processedpixels = 0;
+	Bitmap *shadows = xmalloc(sizeof(*shadows) * n);
+
+	while(i < n){
+		shadows[i].palette = xmalloc(bmppalettesize(bp));
+		shadows[i].data = xmalloc(bmpimagesize(bp)/r);
+		memcpy(&shadows[i].bmpheader, &bp->bmpheader, BMP_HEADER_SIZE);
+		memcpy(&shadows[i].dibheader, &bp->dibheader, DIB_HEADER_SIZE);
+		shadows[i].dibheader.height = bp->dibheader.height/r;
+		memcpy(shadows[i].palette, &bp->palette, bmppalettesize(bp));
+		i++;
+	}
+
+	int totalpixels = bmpimagesize(bp);
+	while(processedpixels < totalpixels){
+		i = 0;
+		while(i < n){
+			shadows[i].data[j] = generatepixel(&bp->data[processedpixels], r-1, i+1);
+			i++;
+		}
+		processedpixels += r;
+		j++;
+	}
+
+	return shadows;
+}
+
 int
 main(int argc, char *argv[]){
 	char *filename;
 	char *arg;
 	FILE *fp;
 
-	arg0 = argv[0];
-
-	/*
-	   if(strcmp("-secret", arg) == 0){
-	   }
-	   */
+	/* keep program name for usage() */
+	arg0 = argv[0]; 
 
 	filename = argv[1];
 	Bitmap *bp = bmpfromfile(filename);
 	truncategrayscale(bp);
 	permutepixels(bp);
-	bmptofile(bp, "output.bmp");
+	int r = 2, n = 4;
+	Bitmap *shadows = formshadows(bp, r, n);
+	bmptofile(&shadows[0], "shadow1.bmp");
+	bmptofile(&shadows[1], "shadow2.bmp");
+	bmptofile(&shadows[2], "shadow3.bmp");
+	bmptofile(&shadows[3], "shadow4.bmp");
 	freebitmap(bp);
 }
