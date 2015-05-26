@@ -43,7 +43,7 @@ typedef struct {
 	BMPheader bmpheader;  /* 14 bytes bmp starting header */
 	DIBheader dibheader;  /* 40 bytes dib header */
 	uint8_t *palette;     /* color palette */
-	uint8_t *data;        /* image pixels */
+	uint8_t *imgpixels;        /* image pixels */
 } Bitmap;
 
 /* prototypes */ 
@@ -65,10 +65,10 @@ static Bitmap     *bmpfromfile(char *filename);
 static void       bmptofile(Bitmap *bp, const char *filename);
 static int        bmpimagesize(Bitmap *bp);
 static int        bmppalettesize(Bitmap *bp);
-static Bitmap     *formshadows(Bitmap *bp, int r, int n);
+static Bitmap     **formshadows(Bitmap *bp, int r, int n);
 
 /* globals */
-static char *arg0; /* program name for usage() */
+static char *argv0; /* program name for usage() */
 
 void
 die(const char *errstr, ...) {
@@ -108,7 +108,8 @@ xfclose (FILE *fp){
 
 void
 usage(void){
-	die("usage: %s -(d|r) -secret image -k number [-n number|-dir directory]\n", arg0);
+	die("usage: %s -(d|r) -secret image -k number [-n number|-dir directory]\n"
+		"2 <= k <= n; 2 <= n\n", argv0);
 }
 
 double 
@@ -159,7 +160,7 @@ bmpfiledibheadersize(FILE *fp){
 void
 freebitmap(Bitmap *bp){
 	free(bp->palette);
-	free(bp->data);
+	free(bp->imgpixels);
 	free(bp);
 }
 
@@ -209,10 +210,10 @@ bmpfromfile(char *filename){
 
 	/* read pixel data */
 	int imagesize = bmpimagesize(bp);
-	bp->data = xmalloc(imagesize);
+	bp->imgpixels = xmalloc(imagesize);
 	i = 0;
 	while(i < imagesize)
-		i += fread(bp->data + i, 1, imagesize, fp);
+		i += fread(bp->imgpixels + i, 1, imagesize, fp);
 
 	xfclose(fp);
 	return bp;
@@ -235,7 +236,7 @@ bmptofile(Bitmap *bp, const char *filename){
 	fwrite(&bp->bmpheader, sizeof(bp->bmpheader), 1, fp);
 	fwrite(&bp->dibheader, sizeof(bp->dibheader), 1, fp);
 	fwrite(bp->palette, bmppalettesize(bp), 1, fp);
-	fwrite(bp->data, bmpimagesize(bp), 1, fp);
+	fwrite(bp->imgpixels, bmpimagesize(bp), 1, fp);
 	xfclose(fp);
 }
 
@@ -251,7 +252,7 @@ truncategrayscale(Bitmap *bp){
 void
 permutepixels(Bitmap *bp){
 	int i, j, temp;
-	uint8_t *p = bp->data;
+	uint8_t *p = bp->imgpixels;
 	srand(10); /* TODO preguntar sobre la "key" de permutación! */
 
 	for(i = bmpimagesize(bp)-1; i > 1; i--){
@@ -275,32 +276,31 @@ generatepixel(uint8_t *coeff, int degree, int value){
 	return ret % PRIME_MOD;
 }
 
-/* TODO limpiar función para que sea puntero a punteros de Bitmap
- * como esta actualmente tiene memory leaks!
- */
-Bitmap *
+Bitmap **
 formshadows(Bitmap *bp, int r, int n){
-	int i = 0;
-	int j = 0;
+	uint8_t *coeff;
+	int i, j = 0;
 	int processedpixels = 0;
-	Bitmap *shadows = xmalloc(sizeof(*shadows) * n);
+	char filename[256];
+	Bitmap **shadows = xmalloc(sizeof(*shadows) * n);
 
-	while(i < n){
-		shadows[i].palette = xmalloc(bmppalettesize(bp));
-		shadows[i].data = xmalloc(bmpimagesize(bp)/r);
-		memcpy(&shadows[i].bmpheader, &bp->bmpheader, BMP_HEADER_SIZE);
-		memcpy(&shadows[i].dibheader, &bp->dibheader, DIB_HEADER_SIZE);
-		shadows[i].dibheader.height = bp->dibheader.height/r;
-		memcpy(shadows[i].palette, &bp->palette, bmppalettesize(bp));
-		i++;
+	/* allocate memory for shadows and copy necessary data */
+	int totalpixels = bmpimagesize(bp);
+	for(i = 0; i < n; i++){
+		shadows[i] = xmalloc(sizeof(**shadows));
+		shadows[i]->palette = xmalloc(bmppalettesize(bp));
+		shadows[i]->imgpixels = xmalloc(totalpixels/r);
+		memcpy(&shadows[i]->bmpheader, &bp->bmpheader, BMP_HEADER_SIZE);
+		memcpy(&shadows[i]->dibheader, &bp->dibheader, DIB_HEADER_SIZE);
+		shadows[i]->dibheader.height = bp->dibheader.height/r;
+		memcpy(shadows[i]->palette, &bp->palette, bmppalettesize(bp));
 	}
 
-	int totalpixels = bmpimagesize(bp);
+	/* generate shadow image pixels */
 	while(processedpixels < totalpixels){
-		i = 0;
-		while(i < n){
-			shadows[i].data[j] = generatepixel(&bp->data[processedpixels], r-1, i+1);
-			i++;
+		for(i = 0; i < n; i++){
+			coeff = &bp->imgpixels[processedpixels]; 
+			shadows[i]->imgpixels[j] = generatepixel(coeff, r-1, i+1);
 		}
 		processedpixels += r;
 		j++;
@@ -316,17 +316,21 @@ main(int argc, char *argv[]){
 	FILE *fp;
 
 	/* keep program name for usage() */
-	arg0 = argv[0]; 
+	argv0 = argv[0]; 
 
 	filename = argv[1];
 	Bitmap *bp = bmpfromfile(filename);
 	truncategrayscale(bp);
 	permutepixels(bp);
-	int r = 2, n = 4;
-	Bitmap *shadows = formshadows(bp, r, n);
-	bmptofile(&shadows[0], "shadow1.bmp");
-	bmptofile(&shadows[1], "shadow2.bmp");
-	bmptofile(&shadows[2], "shadow3.bmp");
-	bmptofile(&shadows[3], "shadow4.bmp");
-	freebitmap(bp);
+	int r = 2, n = 4; /* TODO receive as parameter and parse */
+	Bitmap **shadows = formshadows(bp, r, n);
+
+	/* write shadows to disk */
+	for(n -= 1; n >= 0; n--){
+		snprintf(filename, 256, "shadow%d.bmp", n);
+		printf("%s\n", filename);
+		bmptofile(shadows[n], filename);
+		freebitmap(shadows[n]);
+	}
+	free(shadows);
 }
