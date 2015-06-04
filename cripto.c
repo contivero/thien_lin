@@ -17,11 +17,11 @@
 #define PRIME_MOD              251
 
 typedef struct {
-	uint8_t id[2];    /* magic number to identify the BMP format */
-	uint32_t size;    /* size of the BMP file in bytes */
-	uint16_t unused1; /* reserved */
-	uint16_t unused2; /* reserved */
-	uint32_t offset;  /* starting address of the pixel array (bitmap data) */
+	uint8_t id[2];     /* magic number to identify the BMP format */
+	uint32_t size;     /* size of the BMP file in bytes */
+	uint16_t unused1;  /* reserved */
+	uint16_t unused2;  /* reserved */
+	uint32_t offset;   /* starting address of the pixel array (bitmap data) */
 } BMPheader;
 
 /* 40 bytes BITMAPINFOHEADER */
@@ -51,6 +51,8 @@ static void     die(const char *errstr, ...);
 static void     *xmalloc(size_t size);
 static FILE     *xfopen(const char *filename, const char *mode);
 static void     xfclose(FILE *fp);
+static void     xfread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+static void     xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 static void     usage(void);
 static long     randint(long int max);
 static double   randnormalize(void);
@@ -71,7 +73,7 @@ static Bitmap   **formshadows(Bitmap *bp, int r, int n);
 static char *argv0; /* program name for usage() */
 
 void
-die(const char *errstr, ...) {
+die(const char *errstr, ...){
 	va_list ap;
 
 	va_start(ap, errstr);
@@ -81,7 +83,7 @@ die(const char *errstr, ...) {
 }
 
 void *
-xmalloc(size_t size) {
+xmalloc(size_t size){
 	void *p = malloc(size);
 
 	if(!p)
@@ -104,6 +106,18 @@ void
 xfclose (FILE *fp){
 	if(fclose(fp) == EOF)
 		die("couldn't close file\n");
+}
+
+void
+xfread(void *ptr, size_t size, size_t nmemb, FILE *stream){
+	if (fread(ptr, size, nmemb, stream) < 1)
+		die("read error"); /* TODO print errno string! */
+}
+
+void 
+xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream){
+	if (fwrite(ptr, size, nmemb, stream) != nmemb)
+		die("Error in writing or end of file.\n");
 }
 
 void
@@ -152,8 +166,10 @@ bmpfileheight(FILE *fp){
 uint32_t
 bmpfiledibheadersize(FILE *fp){
 	uint32_t size = get32bitsfromheader(fp, DIB_HEADER_SIZE_OFFSET);
+
 	if(size != DIB_HEADER_SIZE)
 		die("unsupported dib header format\n");
+
 	return size;
 }
 
@@ -180,18 +196,6 @@ dibheaderdebug(Bitmap *bp){
 			bp->dibheader.depth, bp->dibheader.compression,
 			bp->dibheader.pixelarraysize, bp->dibheader.hres, bp->dibheader.vres,
 			bp->dibheader.ncolors, bp->dibheader.nimpcolors);
-}
-
-void
-xfread(void *ptr, size_t size, size_t nmemb, FILE *stream){
-	if (fread(ptr, size, nmemb, stream) < 1)
-		die("read error"); /* TODO print errno string! */
-}
-
-void 
-xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream){
-	if (fwrite(ptr, size, nmemb, stream) != nmemb)
-		die("Error in writing or end of file.\n");
 }
 
 void
@@ -291,8 +295,7 @@ bmptofile(Bitmap *bp, const char *filename){
 
 void
 truncategrayscale(Bitmap *bp){
-	int i;
-	for(i = 0; i < 1024; i++)
+	for(int i = 0; i < 1024; i++)
 		if(bp->palette[i] > 250)
 			bp->palette[i] = 250;
 }
@@ -312,14 +315,13 @@ permutepixels(Bitmap *bp){
 	}
 }
 
-/* uses coeff[0] to coeff[degree] to evaluate the corresponding section
- * polynomial and generate a pixel for a shadow image */
+/* uses coeff[0] to coeff[degree] to evaluate the corresponding
+ * section polynomial and generate a pixel for a shadow image */
 int
 generatepixel(uint8_t *coeff, int degree, int value){
-	int i; 
 	long ret = 0;
 
-	for(i = 0; i <= degree; i++)
+	for(int i = 0; i <= degree; i++)
 		ret += coeff[i] * powl(value,i);
 
 	return ret % PRIME_MOD;
@@ -336,7 +338,7 @@ formshadows(Bitmap *bp, int r, int n){
 	for(i = 0; i < n; i++){
 		shadows[i] = xmalloc(sizeof(**shadows));
 		shadows[i]->palette = xmalloc(bmppalettesize(bp));
-		memcpy(shadows[i]->palette, &bp->palette, bmppalettesize(bp));
+		memcpy(shadows[i]->palette, bp->palette, bmppalettesize(bp));
 		shadows[i]->imgpixels = xmalloc(totalpixels/r);
 		memcpy(&shadows[i]->bmpheader, &bp->bmpheader, sizeof(bp->bmpheader));
 		memcpy(&shadows[i]->dibheader, &bp->dibheader, sizeof(bp->dibheader));
@@ -376,7 +378,8 @@ main(int argc, char *argv[]){
 		snprintf(filename, 256, "shadow%d.bmp", n);
 		printf("%s\n", filename);
 		bmptofile(shadows[n], filename);
-		freebitmap(shadows[n]);
+		freebitmap(shadows[n]); 
 	}
+	freebitmap(bp);
 	free(shadows);
 }
