@@ -1,14 +1,14 @@
 include config.mk
 
-SRC = cripto.c
+SRC = bmpsss.c
 OBJ = ${SRC:.c=.o}
 
-all: options cripto
+all: options bmpsss
 
 options:
-	@echo cripto build options:
-	@echo "CC       = ${CC}"
-	@echo "CFLAGS   = ${CFLAGS}"
+	@echo bmpsss build options:
+	@echo "CC     = ${CC}"
+	@echo "CFLAGS = ${CFLAGS}"
 
 .c.o:
 	@echo CC $<
@@ -16,12 +16,12 @@ options:
 
 ${OBJ}: config.mk
 
-cripto: ${OBJ}
+bmpsss: ${OBJ}
 	@echo CC -o $@
 	@${CC} -o $@ ${OBJ} ${LDFLAGS}
 
 clean:
 	@echo cleaning
-	@rm -f a.out ${OBJ}
+	@rm -f bmpsss ${OBJ}
 
 .PHONY: all options clean

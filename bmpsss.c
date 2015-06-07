@@ -57,7 +57,7 @@ static void     usage(void);
 static long     randint(long int max);
 static double   randnormalize(void);
 static int      generatepixel(uint8_t *coeff, int degree, int value);
-static uint32_t get32bitsfromheader(FILE *fp, char offset);
+static uint32_t get32bitsfromheader(FILE *fp, int offset);
 static uint32_t bmpfilesize(FILE *fp);
 static uint32_t bmpfilewidth(FILE *fp);
 static uint32_t bmpfileheight(FILE *fp);
@@ -137,12 +137,12 @@ randint(long int max){
 } 
 
 uint32_t
-get32bitsfromheader(FILE *fp, char offset){
+get32bitsfromheader(FILE *fp, int offset){
 	uint32_t value;
 	uint32_t pos = ftell(fp);
 
 	fseek(fp, offset, SEEK_SET);
-	fread(&value, 4, 1, fp);
+	xfread(&value, 4, 1, fp);
 	fseek(fp, pos, SEEK_SET);
 
 	return value;
@@ -182,8 +182,9 @@ freebitmap(Bitmap *bp){
 
 void
 bmpheaderdebug(Bitmap *bp){
-	printf("ID: %c%-15c size: %-16d offset: %-16d\n", bp->bmpheader.id[0],
-	bp->bmpheader.id[1], bp->bmpheader.size, bp->bmpheader.offset);
+	printf("ID: %c%-15c size: %-16d r1: %-16d r2: %-16d offset: %-16d\n",
+			bp->bmpheader.id[0], bp->bmpheader.id[1], bp->bmpheader.size, 
+			bp->bmpheader.unused1, bp->bmpheader.unused2, bp->bmpheader.offset);
 }
 
 void
@@ -295,7 +296,9 @@ bmptofile(Bitmap *bp, const char *filename){
 
 void
 truncategrayscale(Bitmap *bp){
-	for(int i = 0; i < 1024; i++)
+	int palettesize = bmppalettesize(bp);
+
+	for(int i = 0; i < palettesize; i++)
 		if(bp->palette[i] > 250)
 			bp->palette[i] = 250;
 }
@@ -330,33 +333,97 @@ generatepixel(uint8_t *coeff, int degree, int value){
 Bitmap **
 formshadows(Bitmap *bp, int r, int n){
 	uint8_t *coeff;
-	int i, j, processedpixels = 0;
+	int i, j;
+	int totalpixels = bmpimagesize(bp);
 	Bitmap **shadows = xmalloc(sizeof(*shadows) * n);
+	Bitmap *sp;
 
 	/* allocate memory for shadows and copy necessary data */
-	int totalpixels = bmpimagesize(bp);
 	for(i = 0; i < n; i++){
 		shadows[i] = xmalloc(sizeof(**shadows));
-		shadows[i]->palette = xmalloc(bmppalettesize(bp));
-		memcpy(shadows[i]->palette, bp->palette, bmppalettesize(bp));
-		shadows[i]->imgpixels = xmalloc(totalpixels/r);
-		memcpy(&shadows[i]->bmpheader, &bp->bmpheader, sizeof(bp->bmpheader));
-		memcpy(&shadows[i]->dibheader, &bp->dibheader, sizeof(bp->dibheader));
-		shadows[i]->dibheader.height = bp->dibheader.height/r;
-		shadows[i]->dibheader.pixelarraysize = bp->dibheader.pixelarraysize/r;
-		shadows[i]->bmpheader.size = bp->dibheader.pixelarraysize/r + PIXEL_ARRAY_OFFSET;
+		sp = shadows[i];
+		sp->palette = xmalloc(bmppalettesize(bp));
+		memcpy(sp->palette, bp->palette, bmppalettesize(bp));
+		sp->imgpixels = xmalloc(totalpixels/r);
+		memcpy(&sp->bmpheader, &bp->bmpheader, sizeof(bp->bmpheader));
+		memcpy(&sp->dibheader, &bp->dibheader, sizeof(bp->dibheader));
+		sp->dibheader.height = bp->dibheader.height / r;
+		sp->dibheader.pixelarraysize = bp->dibheader.pixelarraysize / r;
+		sp->bmpheader.size = bp->dibheader.pixelarraysize/r + PIXEL_ARRAY_OFFSET;
 	}
 
 	/* generate shadow image pixels */
-	for(j = 0; processedpixels < totalpixels; j++){
+	for(j = 0; j*r < totalpixels; j++){
 		for(i = 0; i < n; i++){
-			coeff = &bp->imgpixels[processedpixels]; 
+			coeff = &bp->imgpixels[j*r]; 
 			shadows[i]->imgpixels[j] = generatepixel(coeff, r-1, i+1);
 		}
-		processedpixels += r;
 	}
 
 	return shadows;
+}
+
+Bitmap *
+recover(Bitmap **shadows, int r){
+	int i, j;
+	int npixels = bmpimagesize(*shadows);
+	Bitmap *bp = xmalloc(sizeof(*bp));
+
+	for(i = 0; i < npixels; i++){
+		for(j = 0; j < r; j++){
+			// TODO
+		}
+	}
+
+	return bp;
+}
+
+/* debugging function: TODO delete later! */
+void
+printmat(double **mat, int rows, int cols){
+	int i, j;
+
+	for(i = 0; i < rows; i++){
+		printf("|");
+		for(j = 0; j < cols; j++){
+			printf("%f ", mat[i][j]);
+		}
+		printf("|\n");
+	}
+}
+
+uint8_t *
+revealpixels(double **mat, int r){
+	uint8_t *pixels = xmalloc(sizeof(*pixels) * r);
+	int i, j, k;
+	double a;
+
+	/* take matrix to echelon form */
+	for(j = 0; j < r-1; j++){
+		for(i = r-1; i > j; i--){
+			a = mat[i][j]/mat[i-1][j];
+			for(k = j; k < r+1; k++){
+				mat[i][k] -= mat[i-1][k]*a;
+			}
+		}
+	}
+
+	/* take matrix to reduced row echelon form */
+	for(i = r-1; i > 0; i--){
+		j = i;
+		mat[i][r] /= mat[i][j];
+		mat[i][j] = 1;
+		for(k = i-1; k >= 0; k--){
+			mat[k][r] -= mat[i][r] * mat[k][j];
+			mat[k][j] = 0;
+		}
+	}
+
+	for(i = 0; i < r; i++){
+		pixels[i] = mat[i][r];
+	}
+
+	return pixels;
 }
 
 int

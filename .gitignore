@@ -1,5 +1,9 @@
 *.bmp
-cripto
+bmpsss
+
+# Mac OS X hidden files
+.DS_Store
+
 # Object files
 *.o
 *.ko
