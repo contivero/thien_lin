@@ -15,6 +15,12 @@
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
 #define PRIME_MOD              251
+#define ERROR                  1
+#define OK                     0
+#define MIN_PARAMETERS         6
+
+typedef enum {CIPHER, DECRYPTION} operation_type;
+typedef enum {DONE, NOT_DONE} status;
 
 typedef struct {
 	uint8_t id[2];     /* magic number to identify the BMP format */
@@ -426,14 +432,56 @@ revealpixels(double **mat, int r){
 	return pixels;
 }
 
+/*char * 
+analizeParameters(int argc, char *argv[]){
+
+	return argv;
+}*/
+
 int
 main(int argc, char *argv[]){
+	
 	char *filename;
+	if(argc<MIN_PARAMETERS){
+		printf("%s\n","error in function call, not enought parameters");
+		return ERROR;
+	}else{
+		char* parameters[] = {"-d", "-r", "-secret", "-k", "-n", "-dir"};
+		char *argv0, *filename, *secret, *dir;
+		operation_type operation;
+		int *k, *n;
+		status operation_status = NOT_DONE;
+		argv0 = argv[0]; /* Saving program name for future use */
+		for (int i = 1; i < argc; i++){
+			 if (i + 1 != argc){
+			 	if(strncmp(argv[i], parameters[0], sizeof(parameters[0]))==0 && operation_status!=DONE){
+			 		operation=DECRYPTION;
+			 		operation_status = DONE;
+			 	}else if(strncmp(argv[i], parameters[1], sizeof(parameters[1]))==0 && operation_status!=DONE){
+					operation=CIPHER;
+			 		operation_status = DONE;
+			 	}else if(strncmp(argv[i], parameters[2], sizeof(parameters[2]))==0){
+			 		filename=argv[i+1];
+			 		i++;
+			 	}else if(strncmp(argv[i], parameters[3], sizeof(parameters[3]))==0){
+			 		k=atoi(argv[i+1]);
+			 		i++;
+			 	}else if(strncmp(argv[i], parameters[4], sizeof(parameters[4]))==0){
+			 		n = atoi(argv[i+1]);
+			 		i++;
+			 	}else if(strncmp(argv[i], parameters[5], sizeof(parameters[5]))==0){
+			 		dir = argv[+1];
+			 		i++;
+			 	}else{
+					printf("%s\n","error in function call");
+					return ERROR;	
+			 	}
+			 }
+		}
+		
 
-	/* keep program name for usage() */
-	argv0 = argv[0]; 
+	}
 
-	filename = argv[1];
 	Bitmap *bp = bmpfromfile(filename);
 	truncategrayscale(bp);
 	permutepixels(bp);
