@@ -440,36 +440,41 @@ analizeParameters(int argc, char *argv[]){
 
 int
 main(int argc, char *argv[]){
-	
+
 	char *filename;
 	if(argc<MIN_PARAMETERS){
 		printf("%s\n","error in function call, not enought parameters");
 		return ERROR;
 	}else{
-		char* parameters[] = {"-d", "-r", "-secret", "-k", "-n", "-dir"};
+		char* compulsory_param[] = {"-d", "-r", "-secret", "-k"};
+		char* optional_params[] = {"-n", "-dir"};
 		char *argv0, *filename, *secret, *dir;
 		operation_type operation;
-		int *k, *n;
+		int r, n, compulsory;
 		status operation_status = NOT_DONE;
 		argv0 = argv[0]; /* Saving program name for future use */
 		for (int i = 1; i < argc; i++){
 			 if (i + 1 != argc){
-			 	if(strncmp(argv[i], parameters[0], sizeof(parameters[0]))==0 && operation_status!=DONE){
+			 	if(strncmp(argv[i], compulsory_param[0], sizeof(compulsory_param[0]))==0 && operation_status!=DONE){
 			 		operation=DECRYPTION;
 			 		operation_status = DONE;
-			 	}else if(strncmp(argv[i], parameters[1], sizeof(parameters[1]))==0 && operation_status!=DONE){
+			 		compulsory++;
+			 	}else if(strncmp(argv[i], compulsory_param[1], sizeof(compulsory_param[1]))==0 && operation_status!=DONE){
 					operation=CIPHER;
 			 		operation_status = DONE;
-			 	}else if(strncmp(argv[i], parameters[2], sizeof(parameters[2]))==0){
+			 		compulsory++;
+			 	}else if(strncmp(argv[i], compulsory_param[2], sizeof(compulsory_param[2]))==0){
 			 		filename=argv[i+1];
 			 		i++;
-			 	}else if(strncmp(argv[i], parameters[3], sizeof(parameters[3]))==0){
-			 		k=atoi(argv[i+1]);
+			 		compulsory++;
+			 	}else if(strncmp(argv[i], compulsory_param[3], sizeof(compulsory_param[3]))==0){
+			 		sscanf(argv[i+1], "%d", &r);
 			 		i++;
-			 	}else if(strncmp(argv[i], parameters[4], sizeof(parameters[4]))==0){
-			 		n = atoi(argv[i+1]);
+			 		compulsory++;
+			 	}else if(strncmp(argv[i], optional_params[0], sizeof(optional_params[0]))==0){
+			 		sscanf(argv[i+1], "%d", &n);
 			 		i++;
-			 	}else if(strncmp(argv[i], parameters[5], sizeof(parameters[5]))==0){
+			 	}else if(strncmp(argv[i], optional_params[1], sizeof(optional_params[1]))==0){
 			 		dir = argv[+1];
 			 		i++;
 			 	}else{
@@ -478,23 +483,33 @@ main(int argc, char *argv[]){
 			 	}
 			 }
 		}
-		
 
+		/* Checking compulsory parameters and default for optionals*/
+		int size = sizeof(compulsory_param)/sizeof(compulsory_param[0]);
+		if(compulsory!=size-1){
+			printf("%s\n","error in function call, incomplete parameters");
+		}
+		if(dir==NULL){
+			dir=".";
+		}
+		if(n==0){
+			// Count images in dir
+		}
+
+		Bitmap *bp = bmpfromfile(filename);
+		truncategrayscale(bp);
+		permutepixels(bp);
+		Bitmap **shadows = formshadows(bp, r, n);
+
+		/* write shadows to disk */
+		for(n -= 1; n >= 0; n--){
+			snprintf(filename, 256, "shadow%d.bmp", n);
+			printf("%s\n", filename);
+			bmptofile(shadows[n], filename);
+			freebitmap(shadows[n]); 
+		}
+		freebitmap(bp);
+		free(shadows);
 	}
 
-	Bitmap *bp = bmpfromfile(filename);
-	truncategrayscale(bp);
-	permutepixels(bp);
-	int r = 2, n = 4; /* TODO receive as parameter and parse */
-	Bitmap **shadows = formshadows(bp, r, n);
-
-	/* write shadows to disk */
-	for(n -= 1; n >= 0; n--){
-		snprintf(filename, 256, "shadow%d.bmp", n);
-		printf("%s\n", filename);
-		bmptofile(shadows[n], filename);
-		freebitmap(shadows[n]); 
-	}
-	freebitmap(bp);
-	free(shadows);
 }
