@@ -442,7 +442,11 @@ countfiles(char * path){
 	dirp = opendir(path); /* There should be error handling after this */
 	while ((entry = readdir(dirp)) != NULL) {
 	    if (entry->d_type == DT_REG) { /* If the entry is a regular file */
-	         file_count++;
+			int len = strlen(entry->d_name);
+			const char *last_three = &entry->d_name[len-3];
+			if(strncmp(last_three,"bmp", sizeof("bmp"))==0){
+	        	file_count++;				
+			}
 	    }
 	}
 	closedir(dirp);
