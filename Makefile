@@ -12,7 +12,7 @@ options:
 
 .c.o:
 	@echo CC $<
-	@${CC} -c ${CFLAGS} $<
+	@${CC} -c -D_GNU_SOURCE ${CFLAGS} $<
 
 ${OBJ}: config.mk
 

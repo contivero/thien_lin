@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #define BMP_HEADER_SIZE        14
 #define DIB_HEADER_SIZE_OFFSET 14
@@ -432,15 +433,25 @@ revealpixels(double **mat, int r){
 	return pixels;
 }
 
-/*char * 
-analizeParameters(int argc, char *argv[]){
+int
+countfiles(char * path){
+	int file_count = 0;
+	DIR * dirp;
+	struct dirent * entry;
 
-	return argv;
-}*/
+	dirp = opendir(path); /* There should be error handling after this */
+	while ((entry = readdir(dirp)) != NULL) {
+	    if (entry->d_type == DT_REG) { /* If the entry is a regular file */
+	         file_count++;
+	    }
+	}
+	closedir(dirp);
+
+	return file_count;
+}
 
 int
 main(int argc, char *argv[]){
-
 	char *filename;
 	if(argc<MIN_PARAMETERS){
 		printf("%s\n","error in function call, not enought parameters");
@@ -448,9 +459,9 @@ main(int argc, char *argv[]){
 	}else{
 		char* compulsory_param[] = {"-d", "-r", "-secret", "-k"};
 		char* optional_params[] = {"-n", "-dir"};
-		char *argv0, *filename, *secret, *dir;
+		char *argv0, *filename, *secret, *dir=NULL;
 		operation_type operation;
-		int r, n, compulsory;
+		int r, n, compulsory=0;
 		status operation_status = NOT_DONE;
 		argv0 = argv[0]; /* Saving program name for future use */
 		for (int i = 1; i < argc; i++){
@@ -475,7 +486,7 @@ main(int argc, char *argv[]){
 			 		sscanf(argv[i+1], "%d", &n);
 			 		i++;
 			 	}else if(strncmp(argv[i], optional_params[1], sizeof(optional_params[1]))==0){
-			 		dir = argv[+1];
+			 		dir = argv[i+1];
 			 		i++;
 			 	}else{
 					printf("%s\n","error in function call");
@@ -490,11 +501,14 @@ main(int argc, char *argv[]){
 			printf("%s\n","error in function call, incomplete parameters");
 		}
 		if(dir==NULL){
-			dir=".";
+			dir="./";
 		}
 		if(n==0){
-			// Count images in dir
+			int count=countfiles(dir);
+			printf("%s %d\n","count", count);
+			n=count;
 		}
+
 
 		Bitmap *bp = bmpfromfile(filename);
 		truncategrayscale(bp);
