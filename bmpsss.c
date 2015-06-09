@@ -14,13 +14,13 @@
 #define FILESIZE_OFFSET        2	
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
-#define PRIME_MOD              251
+#define PRIME                  251
 
 typedef struct {
 	uint8_t id[2];     /* magic number to identify the BMP format */
 	uint32_t size;     /* size of the BMP file in bytes */
-	uint16_t unused1;  /* reserved */
-	uint16_t unused2;  /* reserved */
+	uint16_t unused1;  /* key */
+	uint16_t unused2;  /* shadow number */
 	uint32_t offset;   /* starting address of the pixel array (bitmap data) */
 } BMPheader;
 
@@ -56,14 +56,15 @@ static void     xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream
 static void     usage(void);
 static long     randint(long int max);
 static double   randnormalize(void);
-static int      generatepixel(uint8_t *coeff, int degree, int value);
+static int      generatepixel(const uint8_t *coeff, int degree, int value);
 static uint32_t get32bitsfromheader(FILE *fp, int offset);
 static uint32_t bmpfilesize(FILE *fp);
 static uint32_t bmpfilewidth(FILE *fp);
 static uint32_t bmpfileheight(FILE *fp);
 static uint32_t bmpfiledibheadersize(FILE *fp);
 static void     freebitmap(Bitmap *bp);
-static Bitmap   *bmpfromfile(char *filename);
+static Bitmap   *loadbmp(const char *filename, int r);
+static Bitmap   *bmpfromfile(FILE *fp);
 static void     bmptofile(Bitmap *bp, const char *filename);
 static int      bmpimagesize(Bitmap *bp);
 static int      bmppalettesize(Bitmap *bp);
@@ -71,6 +72,26 @@ static Bitmap   **formshadows(Bitmap *bp, int r, int n);
 
 /* globals */
 static char *argv0; /* program name for usage() */
+static uint16_t swidth;	/* shadow width */
+static uint16_t sheight; /* shadow width */
+static int modular_inverse[PRIME] = { /* modular multiplicative inverse */
+	0, 1, 126, 84, 63, 201, 42, 36, 157, 28, 226, 137, 21, 58, 18, 67, 204,
+	192, 14, 185, 113, 12, 194, 131, 136, 241, 29, 93, 9, 26, 159, 81, 102,
+	213, 96, 208, 7, 95, 218, 103, 182, 49, 6, 216, 97, 106, 191, 235, 68, 41,
+	246, 64, 140, 90, 172, 178, 130, 229, 13, 234, 205, 107, 166, 4, 51, 112,
+	232, 15, 48, 211, 104, 99, 129, 196, 173, 164, 109, 163, 177, 197, 91, 31,
+	150, 124, 3, 189, 108, 176, 174, 110, 53, 80, 221, 27, 243, 37, 34, 44,
+	146, 71, 123, 169, 32, 39, 70, 153, 45, 61, 86, 76, 89, 199, 65, 20, 240,
+	227, 132, 118, 117, 135, 228, 195, 179, 100, 83, 249, 2, 168, 151, 72, 56,
+	23, 116, 134, 133, 119, 24, 11, 231, 186, 52, 162, 175, 165, 190, 206, 98,
+	181, 212, 219, 82, 128, 180, 105, 207, 217, 214, 8, 224, 30, 171, 198, 141,
+	77, 75, 143, 62, 248, 127, 101, 220, 160, 54, 74, 88, 142, 87, 78, 55, 122,
+	152, 147, 40, 203, 236, 19, 139, 200, 247, 85, 144, 46, 17, 238, 22, 121,
+	73, 79, 161, 111, 187, 5, 210, 183, 16, 60, 145, 154, 35, 245, 202, 69,
+	148, 33, 156, 244, 43, 155, 38, 149, 170, 92, 225, 242, 158, 222, 10, 115,
+	120, 57, 239, 138, 66, 237, 59, 47, 184, 233, 193, 230, 114, 25, 223, 94,
+	215, 209, 50, 188, 167, 125
+};
 
 void
 die(const char *errstr, ...){
@@ -248,8 +269,7 @@ writedibheader(Bitmap *bp, FILE *fp){
 }
 
 Bitmap *
-bmpfromfile(char *filename){
-	FILE *fp = xfopen(filename, "r");
+bmpfromfile(FILE *fp){
 	Bitmap *bp = xmalloc(sizeof(*bp));
 
 	readbmpheader(bp, fp);
@@ -269,7 +289,6 @@ bmpfromfile(char *filename){
 	bp->imgpixels = xmalloc(imagesize);
 	xfread(bp->imgpixels, 1, imagesize, fp);
 
-	xfclose(fp);
 	return bp;
 }
 
@@ -303,7 +322,6 @@ truncategrayscale(Bitmap *bp){
 			bp->palette[i] = 250;
 }
 
-/* Durstenfeld algorithm */
 void
 permutepixels(Bitmap *bp){
 	int i, j, temp;
@@ -321,13 +339,56 @@ permutepixels(Bitmap *bp){
 /* uses coeff[0] to coeff[degree] to evaluate the corresponding
  * section polynomial and generate a pixel for a shadow image */
 int
-generatepixel(uint8_t *coeff, int degree, int value){
+generatepixel(const uint8_t *coeff, int degree, int value){
 	long ret = 0;
 
 	for(int i = 0; i <= degree; i++)
 		ret += coeff[i] * powl(value,i);
 
-	return ret % PRIME_MOD;
+	return ret % PRIME;
+}
+
+Bitmap *
+newshadow(Bitmap *bp, int r, int shadownumber){
+	int width = bp->dibheader.width;
+	int height = bp->dibheader.height;
+	int totalpixels = (width * height)/r;
+
+	Bitmap *sp    = xmalloc(sizeof(*sp));
+	sp->palette   = xmalloc(PALETTE_SIZE);
+	sp->imgpixels = xmalloc(totalpixels);
+
+	memcpy(sp->palette, bp->palette, PALETTE_SIZE);
+	memcpy(&sp->bmpheader, &bp->bmpheader, sizeof(bp->bmpheader));
+	memcpy(&sp->dibheader, &bp->dibheader, sizeof(bp->dibheader));
+
+	sp->dibheader.height = sheight;
+	sp->dibheader.width = swidth;
+	sp->dibheader.pixelarraysize = totalpixels;
+	sp->bmpheader.size = totalpixels + PIXEL_ARRAY_OFFSET;
+	sp->bmpheader.unused2 = shadownumber;
+
+	return sp;
+}
+
+/* find closest pair of numbers that when multiplied, give the input.
+ * both of them are stored in the swidth and sheight globals */
+void
+findwidthheight(int x){
+	int i;
+	int n = floor(sqrt(x));
+	swidth = 1;
+
+	for(;;){
+		if(x % n == 0){
+			swidth *= n;
+			sheight = x / n;
+			break;
+		} else {
+			n--;
+		}
+	}
+	printf("swidth = %d, sheight = %d", swidth, sheight);
 }
 
 Bitmap **
@@ -336,21 +397,12 @@ formshadows(Bitmap *bp, int r, int n){
 	int i, j;
 	int totalpixels = bmpimagesize(bp);
 	Bitmap **shadows = xmalloc(sizeof(*shadows) * n);
-	Bitmap *sp;
+
+	findwidthheight(totalpixels/r);
 
 	/* allocate memory for shadows and copy necessary data */
-	for(i = 0; i < n; i++){
-		shadows[i] = xmalloc(sizeof(**shadows));
-		sp = shadows[i];
-		sp->palette = xmalloc(bmppalettesize(bp));
-		memcpy(sp->palette, bp->palette, bmppalettesize(bp));
-		sp->imgpixels = xmalloc(totalpixels/r);
-		memcpy(&sp->bmpheader, &bp->bmpheader, sizeof(bp->bmpheader));
-		memcpy(&sp->dibheader, &bp->dibheader, sizeof(bp->dibheader));
-		sp->dibheader.height = bp->dibheader.height / r;
-		sp->dibheader.pixelarraysize = bp->dibheader.pixelarraysize / r;
-		sp->bmpheader.size = bp->dibheader.pixelarraysize/r + PIXEL_ARRAY_OFFSET;
-	}
+	for(i = 0; i < n; i++)
+		shadows[i] = newshadow(bp, r, i+1);
 
 	/* generate shadow image pixels */
 	for(j = 0; j*r < totalpixels; j++){
@@ -380,50 +432,110 @@ recover(Bitmap **shadows, int r){
 
 /* debugging function: TODO delete later! */
 void
-printmat(double **mat, int rows, int cols){
+printmat(int **mat, int rows, int cols){
 	int i, j;
 
 	for(i = 0; i < rows; i++){
 		printf("|");
 		for(j = 0; j < cols; j++){
-			printf("%f ", mat[i][j]);
+			printf("%d ", mat[i][j]);
 		}
 		printf("|\n");
 	}
 }
 
-uint8_t *
-revealpixels(double **mat, int r){
+void
+revealpixels(int **mat, int r){
 	uint8_t *pixels = xmalloc(sizeof(*pixels) * r);
 	int i, j, k;
-	double a;
+	int a;
 
 	/* take matrix to echelon form */
 	for(j = 0; j < r-1; j++){
 		for(i = r-1; i > j; i--){
-			a = mat[i][j]/mat[i-1][j];
+			a = mat[i][j] * modular_inverse[mat[i-1][j]];
 			for(k = j; k < r+1; k++){
-				mat[i][k] -= mat[i-1][k]*a;
+				mat[i][k] -= (mat[i-1][k] * a) % PRIME;
 			}
 		}
 	}
 
 	/* take matrix to reduced row echelon form */
 	for(i = r-1; i > 0; i--){
-		j = i;
-		mat[i][r] /= mat[i][j];
-		mat[i][j] = 1;
+		mat[i][r] = (mat[i][r] * modular_inverse[mat[i][i]]) % PRIME;
+		mat[i][i] = 1;
 		for(k = i-1; k >= 0; k--){
-			mat[k][r] -= mat[i][r] * mat[k][j];
-			mat[k][j] = 0;
+			mat[k][r] = (mat[k][r] - ((mat[i][r] * mat[k][i]) % PRIME)) % PRIME;
+			mat[k][i] = 0;
 		}
 	}
+}
+
+void
+validate_r(FILE *fp, int r){
+	int width  = bmpfilewidth(fp);
+	int height = bmpfileheight(fp);
+	int pixels = width * height;
+	int aux    = pixels / r;
+
+	if(pixels != aux * r)
+		die("Can't divide %dx%d image by %d. Choose another r\n", 
+				width, height, r);
+}
+
+Bitmap *
+loadbmp(const char *filename, int r){
+	FILE *fp = xfopen(filename, "r");
+
+	validate_r(fp, r);
+	Bitmap *bmp = bmpfromfile(fp);
+	xfclose(fp);
+
+	return bmp;
+}
+
+void
+reveal(Bitmap **shadows, int r){
+	int i, j, k, t, value;
+	uint8_t *pixels;
+	Bitmap *sp;
+	int **mat = xmalloc(sizeof(*mat) * r);
 
 	for(i = 0; i < r; i++){
-		pixels[i] = mat[i][r];
+		mat[i] = xmalloc(sizeof(**mat) * (r+1));
 	}
 
-	return pixels;
+	/* TODO ver si puedo usar la función newshadow para esto */
+	sp = shadows[0];
+	Bitmap *bmp = xmalloc(sizeof(*bmp));
+	bmp->palette = xmalloc(bmppalettesize(sp));
+	memcpy(bmp->palette, sp->palette, bmppalettesize(sp));
+	bmp->imgpixels = xmalloc(sp->dibheader.pixelarraysize * r);
+	memcpy(&bmp->bmpheader, &sp->bmpheader, sizeof(sp->bmpheader));
+	memcpy(&bmp->dibheader, &sp->dibheader, sizeof(sp->dibheader));
+	bmp->dibheader.height = 512; /* TODO NO CABLEAR, AVERIGUAR DE DONDE SACAR */
+	bmp->dibheader.width = 512; /* TODO NO CABLEAR, AVERIGUAR DE DONDE SACAR */
+	bmp->dibheader.pixelarraysize = sp->dibheader.pixelarraysize * r;
+	bmp->bmpheader.size = sp->dibheader.pixelarraysize*r + PIXEL_ARRAY_OFFSET;
+
+	for(i = 0; i < (*shadows)->dibheader.pixelarraysize; i++){
+		for(j = 0; j < r; j++){
+			sp = shadows[j];
+			value = sp->bmpheader.unused2;
+			mat[j][0] = 1;
+			for(k = 1; k < r; k++){
+				mat[j][k] = value;
+				value *= value;
+			}
+			mat[j][r] = sp->imgpixels[i];
+		}
+		revealpixels(mat, r);
+		for(t = i * r; t < (i+1) * r; t++){
+			bmp->imgpixels[t] = mat[t % r][r];
+		}
+	}
+//	permutepixels(bmp);
+	bmptofile(bmp, "revealed.bmp");
 }
 
 int
@@ -433,20 +545,23 @@ main(int argc, char *argv[]){
 	/* keep program name for usage() */
 	argv0 = argv[0]; 
 
-	filename = argv[1];
-	Bitmap *bp = bmpfromfile(filename);
-	truncategrayscale(bp);
-	permutepixels(bp);
 	int r = 2, n = 4; /* TODO receive as parameter and parse */
+
+	filename = argv[1];
+	Bitmap *bp = loadbmp(filename, r);
+	truncategrayscale(bp);
+//	permutepixels(bp);
 	Bitmap **shadows = formshadows(bp, r, n);
 
-	/* write shadows to disk */
-	for(n -= 1; n >= 0; n--){
-		snprintf(filename, 256, "shadow%d.bmp", n);
-		printf("%s\n", filename);
-		bmptofile(shadows[n], filename);
-		freebitmap(shadows[n]); 
-	}
-	freebitmap(bp);
-	free(shadows);
+	reveal(shadows, r);
+
+	/* /1* write shadows to disk *1/ */
+	/* for(n -= 1; n >= 0; n--){ */
+	/* 	snprintf(filename, 256, "shadow%d.bmp", n); */
+	/* 	printf("%s\n", filename); */
+	/* 	bmptofile(shadows[n], filename); */
+	/* 	freebitmap(shadows[n]); */ 
+	/* } */
+	/* freebitmap(bp); */
+	/* free(shadows); */
 }
