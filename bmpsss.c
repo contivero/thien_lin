@@ -7,11 +7,9 @@
 #include <unistd.h>
 
 #define BMP_HEADER_SIZE        14
-#define DIB_HEADER_SIZE_OFFSET 14
 #define DIB_HEADER_SIZE        40
 #define PALETTE_SIZE           1024
 #define PIXEL_ARRAY_OFFSET     BMP_HEADER_SIZE + DIB_HEADER_SIZE + PALETTE_SIZE
-#define FILESIZE_OFFSET        2	
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
 #define PRIME                  251
@@ -40,10 +38,10 @@ typedef struct {
 } DIBheader;
 
 typedef struct {
-	BMPheader bmpheader;  /* 14 bytes bmp starting header */
-	DIBheader dibheader;  /* 40 bytes dib header */
-	uint8_t *palette;     /* color palette */
-	uint8_t *imgpixels;   /* array of bytes representing each pixel */
+	BMPheader bmpheader;   /* 14 bytes bmp starting header */
+	DIBheader dibheader;   /* 40 bytes dib header */
+	uint8_t palette[1024]; /* color palette; mandatory for depth <= 8  */
+	uint8_t *imgpixels;    /* array of bytes representing each pixel */
 } Bitmap;
 
 /* prototypes */ 
@@ -54,27 +52,40 @@ static void     xfclose(FILE *fp);
 static void     xfread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 static void     xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 static void     usage(void);
-static long     randint(long int max);
+static void     swap(uint8_t *s, uint8_t *t);
+static int      mod(int dividend, int divisor);
 static double   randnormalize(void);
-static int      generatepixel(const uint8_t *coeff, int degree, int value);
+static long     randint(long int max);
 static uint32_t get32bitsfromheader(FILE *fp, int offset);
-static uint32_t bmpfilesize(FILE *fp);
 static uint32_t bmpfilewidth(FILE *fp);
 static uint32_t bmpfileheight(FILE *fp);
-static uint32_t bmpfiledibheadersize(FILE *fp);
+static void     initpalette(uint8_t palette[]);
+static Bitmap   *newbitmap(uint16_t width, uint16_t height);
 static void     freebitmap(Bitmap *bp);
-static Bitmap   *loadbmp(const char *filename, int r);
+static void     readbmpheader(Bitmap *bp, FILE *fp);
+static void     writebmpheader(Bitmap *bp, FILE *fp);
+static void     readdibheader(Bitmap *bp, FILE *fp);
+static void     writedibheader(Bitmap *bp, FILE *fp);
 static Bitmap   *bmpfromfile(FILE *fp);
-static void     bmptofile(Bitmap *bp, const char *filename);
+static void     validate_r(FILE *fp, int r);
+static Bitmap   *loadbmp(const char *filename, int r);
 static int      bmpimagesize(Bitmap *bp);
-static int      bmppalettesize(Bitmap *bp);
+static void     bmptofile(Bitmap *bp, const char *filename);
+static void     truncategrayscale(Bitmap *bp);
+static void     generatepermutation(int imgsize, int seed);
+static void     permutepixels(Bitmap *bp);
+static void     unpermutepixels(Bitmap *bp);
+static uint8_t  generatepixel(const uint8_t *coeff, int degree, int value);
+static void     findclosestpair(int value, uint16_t *v1, uint16_t *v2);
+static Bitmap   *newshadow(uint16_t width, uint16_t height, uint16_t shadownumber);
 static Bitmap   **formshadows(Bitmap *bp, int r, int n);
+static void     findcoefficients(int **mat, int r);
+static void     revealsecret(Bitmap **shadows, int r, int width, int height);
 
 /* globals */
 static char *argv0; /* program name for usage() */
-static uint16_t swidth;	/* shadow width */
-static uint16_t sheight; /* shadow width */
-static int modular_inverse[PRIME] = { /* modular multiplicative inverse */
+static int *permutationseq; /* shadow width */
+static const int modinv[PRIME] = { /* modular multiplicative inverse */
 	0, 1, 126, 84, 63, 201, 42, 36, 157, 28, 226, 137, 21, 58, 18, 67, 204,
 	192, 14, 185, 113, 12, 194, 131, 136, 241, 29, 93, 9, 26, 159, 81, 102,
 	213, 96, 208, 7, 95, 218, 103, 182, 49, 6, 216, 97, 106, 191, 235, 68, 41,
@@ -147,6 +158,22 @@ usage(void){
 		"2 <= k <= n; 2 <= n\n", argv0);
 }
 
+void
+swap(uint8_t *s, uint8_t *t){
+	uint8_t temp;
+
+	temp = *s;
+	*s = *t;
+	*t = temp;
+}
+
+int
+mod(int dividend, int divisor){
+	int modulus = dividend % divisor;
+
+	return modulus > 0 ? modulus : modulus + divisor;
+}
+
 double 
 randnormalize(void){
 	return rand()/((double)RAND_MAX+1);
@@ -170,11 +197,6 @@ get32bitsfromheader(FILE *fp, int offset){
 }
 
 uint32_t
-bmpfilesize(FILE *fp){
-	return get32bitsfromheader(fp, FILESIZE_OFFSET);
-}
-
-uint32_t
 bmpfilewidth(FILE *fp){
 	return get32bitsfromheader(fp, WIDTH_OFFSET);
 }
@@ -184,19 +206,52 @@ bmpfileheight(FILE *fp){
 	return get32bitsfromheader(fp, HEIGHT_OFFSET);
 }
 
-uint32_t
-bmpfiledibheadersize(FILE *fp){
-	uint32_t size = get32bitsfromheader(fp, DIB_HEADER_SIZE_OFFSET);
+/* initialize palette with default 8-bit greyscale values */
+void
+initpalette(uint8_t palette[]){
+	int i, j;
 
-	if(size != DIB_HEADER_SIZE)
-		die("unsupported dib header format\n");
+	for(i = 0; i < 256; i++){
+		j = i * 4; 
+		palette[j++] = i;
+		palette[j++] = i;
+		palette[j++] = i;
+		palette[j] = 0;
+	}
+}
 
-	return size;
+Bitmap *
+newbitmap(uint16_t width, uint16_t height){
+	int totalpixels = width * height;
+	Bitmap *bmp = xmalloc(sizeof(*bmp));
+
+	bmp->bmpheader.id[0]   = 'B';
+	bmp->bmpheader.id[1]   = 'M';
+	bmp->bmpheader.size    = PIXEL_ARRAY_OFFSET + totalpixels;
+	bmp->bmpheader.unused1 = 0;
+	bmp->bmpheader.unused2 = 0;
+	bmp->bmpheader.offset  = PIXEL_ARRAY_OFFSET;
+
+	bmp->dibheader.size           = DIB_HEADER_SIZE;
+	bmp->dibheader.width          = width; 
+	bmp->dibheader.height         = height;
+	bmp->dibheader.nplanes        = 1;  
+	bmp->dibheader.depth          = 8;     
+	bmp->dibheader.compression    = 0;
+	bmp->dibheader.pixelarraysize = totalpixels;
+	bmp->dibheader.hres           = 0;
+	bmp->dibheader.vres           = 0;
+	bmp->dibheader.ncolors        = 0;
+	bmp->dibheader.nimpcolors     = 0;
+
+	initpalette(bmp->palette);
+	bmp->imgpixels = xmalloc(totalpixels);
+
+	return bmp;
 }
 
 void
 freebitmap(Bitmap *bp){
-	free(bp->palette);
 	free(bp->imgpixels);
 	free(bp);
 }
@@ -280,9 +335,7 @@ bmpfromfile(FILE *fp){
 	dibheaderdebug(bp);
 
 	/* read color palette */
-	int palettesize = bmppalettesize(bp);
-	bp->palette = xmalloc(palettesize);
-	xfread(bp->palette, 1, palettesize, fp);
+	xfread(bp->palette, 1, PALETTE_SIZE, fp);
 
 	/* read pixel data */
 	int imagesize = bmpimagesize(bp);
@@ -290,185 +343,6 @@ bmpfromfile(FILE *fp){
 	xfread(bp->imgpixels, 1, imagesize, fp);
 
 	return bp;
-}
-
-int
-bmpimagesize(Bitmap *bp){
-	return bp->bmpheader.size - bp->bmpheader.offset;
-}
-
-int
-bmppalettesize(Bitmap *bp){
-	return bp->bmpheader.offset - (BMP_HEADER_SIZE + bp->dibheader.size);
-}
-
-void
-bmptofile(Bitmap *bp, const char *filename){
-	FILE *fp = xfopen(filename, "w");
-
-	writebmpheader(bp, fp);
-	writedibheader(bp, fp);
-	xfwrite(bp->palette, bmppalettesize(bp), 1, fp);
-	xfwrite(bp->imgpixels, bmpimagesize(bp), 1, fp);
-	xfclose(fp);
-}
-
-void
-truncategrayscale(Bitmap *bp){
-	int palettesize = bmppalettesize(bp);
-
-	for(int i = 0; i < palettesize; i++)
-		if(bp->palette[i] > 250)
-			bp->palette[i] = 250;
-}
-
-void
-permutepixels(Bitmap *bp){
-	int i, j, temp;
-	uint8_t *p = bp->imgpixels;
-	srand(10); /* TODO preguntar sobre la "key" de permutación! */
-
-	for(i = bmpimagesize(bp)-1; i > 1; i--){
-		j = randint(i);
-		temp = p[j];
-		p[j] = p[i];
-		p[i] = temp;
-	}
-}
-
-/* uses coeff[0] to coeff[degree] to evaluate the corresponding
- * section polynomial and generate a pixel for a shadow image */
-int
-generatepixel(const uint8_t *coeff, int degree, int value){
-	long ret = 0;
-
-	for(int i = 0; i <= degree; i++)
-		ret += coeff[i] * powl(value,i);
-
-	return ret % PRIME;
-}
-
-Bitmap *
-newshadow(Bitmap *bp, int r, int shadownumber){
-	int width = bp->dibheader.width;
-	int height = bp->dibheader.height;
-	int totalpixels = (width * height)/r;
-
-	Bitmap *sp    = xmalloc(sizeof(*sp));
-	sp->palette   = xmalloc(PALETTE_SIZE);
-	sp->imgpixels = xmalloc(totalpixels);
-
-	memcpy(sp->palette, bp->palette, PALETTE_SIZE);
-	memcpy(&sp->bmpheader, &bp->bmpheader, sizeof(bp->bmpheader));
-	memcpy(&sp->dibheader, &bp->dibheader, sizeof(bp->dibheader));
-
-	sp->dibheader.height = sheight;
-	sp->dibheader.width = swidth;
-	sp->dibheader.pixelarraysize = totalpixels;
-	sp->bmpheader.size = totalpixels + PIXEL_ARRAY_OFFSET;
-	sp->bmpheader.unused2 = shadownumber;
-
-	return sp;
-}
-
-/* find closest pair of numbers that when multiplied, give the input.
- * both of them are stored in the swidth and sheight globals */
-void
-findwidthheight(int x){
-	int i;
-	int n = floor(sqrt(x));
-	swidth = 1;
-
-	for(;;){
-		if(x % n == 0){
-			swidth *= n;
-			sheight = x / n;
-			break;
-		} else {
-			n--;
-		}
-	}
-	printf("swidth = %d, sheight = %d", swidth, sheight);
-}
-
-Bitmap **
-formshadows(Bitmap *bp, int r, int n){
-	uint8_t *coeff;
-	int i, j;
-	int totalpixels = bmpimagesize(bp);
-	Bitmap **shadows = xmalloc(sizeof(*shadows) * n);
-
-	findwidthheight(totalpixels/r);
-
-	/* allocate memory for shadows and copy necessary data */
-	for(i = 0; i < n; i++)
-		shadows[i] = newshadow(bp, r, i+1);
-
-	/* generate shadow image pixels */
-	for(j = 0; j*r < totalpixels; j++){
-		for(i = 0; i < n; i++){
-			coeff = &bp->imgpixels[j*r]; 
-			shadows[i]->imgpixels[j] = generatepixel(coeff, r-1, i+1);
-		}
-	}
-
-	return shadows;
-}
-
-Bitmap *
-recover(Bitmap **shadows, int r){
-	int i, j;
-	int npixels = bmpimagesize(*shadows);
-	Bitmap *bp = xmalloc(sizeof(*bp));
-
-	for(i = 0; i < npixels; i++){
-		for(j = 0; j < r; j++){
-			// TODO
-		}
-	}
-
-	return bp;
-}
-
-/* debugging function: TODO delete later! */
-void
-printmat(int **mat, int rows, int cols){
-	int i, j;
-
-	for(i = 0; i < rows; i++){
-		printf("|");
-		for(j = 0; j < cols; j++){
-			printf("%d ", mat[i][j]);
-		}
-		printf("|\n");
-	}
-}
-
-void
-revealpixels(int **mat, int r){
-	uint8_t *pixels = xmalloc(sizeof(*pixels) * r);
-	int i, j, k;
-	int a;
-
-	/* take matrix to echelon form */
-	for(j = 0; j < r-1; j++){
-		for(i = r-1; i > j; i--){
-			a = mat[i][j] * modular_inverse[mat[i-1][j]];
-			for(k = j; k < r+1; k++){
-				mat[i][k] -= (mat[i-1][k] * a) % PRIME;
-			}
-		}
-	}
-
-	/* take matrix to reduced row echelon form */
-	for(i = r-1; i > 0; i--){
-		mat[i][r] = (mat[i][r] * modular_inverse[mat[i][i]]) % PRIME;
-		mat[i][i] = 1;
-		for(k = i-1; k >= 0; k--){
-			mat[k][r] = (mat[k][r] - ((mat[i][r] * mat[k][i]) % PRIME)) % PRIME;
-			mat[k][i] = 0;
-		}
-	}
 }
 
 void
@@ -494,48 +368,196 @@ loadbmp(const char *filename, int r){
 	return bmp;
 }
 
-void
-reveal(Bitmap **shadows, int r){
-	int i, j, k, t, value;
-	uint8_t *pixels;
-	Bitmap *sp;
-	int **mat = xmalloc(sizeof(*mat) * r);
+int
+bmpimagesize(Bitmap *bp){
+	return bp->bmpheader.size - bp->bmpheader.offset;
+}
 
-	for(i = 0; i < r; i++){
-		mat[i] = xmalloc(sizeof(**mat) * (r+1));
+void
+bmptofile(Bitmap *bp, const char *filename){
+	FILE *fp = xfopen(filename, "w");
+
+	writebmpheader(bp, fp);
+	writedibheader(bp, fp);
+	xfwrite(bp->palette, PALETTE_SIZE, 1, fp);
+	xfwrite(bp->imgpixels, bmpimagesize(bp), 1, fp);
+	xfclose(fp);
+}
+
+void
+truncategrayscale(Bitmap *bp){
+	for(int i = 0; i < PALETTE_SIZE; i++)
+		if(bp->palette[i] > 250)
+			bp->palette[i] = 250;
+}
+
+void
+generatepermutation(int imgsize, int seed){
+	int i;
+	srand(seed);
+
+	permutationseq = xmalloc(sizeof(*permutationseq) * imgsize);
+
+	for(i = imgsize - 1; i > 0; i--)
+		permutationseq[i] = randint(i);
+}
+
+void
+permutepixels(Bitmap *bp){
+	int i, j;
+	uint8_t *p = bp->imgpixels;
+	int imgsize = bmpimagesize(bp);
+
+	for(i = imgsize - 1; i > 1; i--){
+		j = permutationseq[i];
+		swap(&p[j], &p[i]);
+	}
+}
+
+void
+unpermutepixels(Bitmap *bp){
+	int i, j;
+	uint8_t *p = bp->imgpixels;
+	int imgsize = bmpimagesize(bp);
+
+	for(i = 1 ; i < imgsize - 1; i++){
+		j = permutationseq[i];
+		swap(&p[j], &p[i]);
+	}
+}
+
+/* uses coeff[0] to coeff[degree] to evaluate the corresponding
+ * section polynomial and generate a pixel for a shadow image */
+uint8_t
+generatepixel(const uint8_t *coeff, int degree, int value){
+	long ret = 0;
+
+	for(int i = 0; i <= degree; i++)
+		ret += coeff[i] * powl(value,i);
+
+	return ret % PRIME;
+}
+
+void
+findclosestpair(int x, uint16_t *width, uint16_t *height){
+	int n = floor(sqrt(x));
+
+	for(; n > 2; n--){
+		if(x % n == 0){
+			*width  = n;
+			*height = x / n;
+			break;
+		}
+	}
+}
+
+Bitmap *
+newshadow(uint16_t width, uint16_t height, uint16_t shadownumber){
+	Bitmap *bmp = newbitmap(width, height);
+	bmp->bmpheader.unused2 = shadownumber;
+
+	return bmp;
+}
+
+Bitmap **
+formshadows(Bitmap *bp, int r, int n){
+	uint16_t width, height;
+	uint8_t *coeff;
+	int i, j;
+	int totalpixels = bmpimagesize(bp);
+	Bitmap **shadows = xmalloc(sizeof(*shadows) * n);
+
+	findclosestpair(totalpixels/r, &width, &height);
+
+	for(i = 0; i < n; i++)
+		shadows[i] = newshadow(width, height, i+1);
+
+	/* generate shadow image pixels */
+	for(j = 0; j*r < totalpixels; j++){
+		coeff = &bp->imgpixels[j*r]; 
+		for(i = 0; i < n; i++){
+			shadows[i]->imgpixels[j] = generatepixel(coeff, r-1, i+1);
+		}
 	}
 
-	/* TODO ver si puedo usar la función newshadow para esto */
-	sp = shadows[0];
-	Bitmap *bmp = xmalloc(sizeof(*bmp));
-	bmp->palette = xmalloc(bmppalettesize(sp));
-	memcpy(bmp->palette, sp->palette, bmppalettesize(sp));
-	bmp->imgpixels = xmalloc(sp->dibheader.pixelarraysize * r);
-	memcpy(&bmp->bmpheader, &sp->bmpheader, sizeof(sp->bmpheader));
-	memcpy(&bmp->dibheader, &sp->dibheader, sizeof(sp->dibheader));
-	bmp->dibheader.height = 512; /* TODO NO CABLEAR, AVERIGUAR DE DONDE SACAR */
-	bmp->dibheader.width = 512; /* TODO NO CABLEAR, AVERIGUAR DE DONDE SACAR */
-	bmp->dibheader.pixelarraysize = sp->dibheader.pixelarraysize * r;
-	bmp->bmpheader.size = sp->dibheader.pixelarraysize*r + PIXEL_ARRAY_OFFSET;
+	return shadows;
+}
 
-	for(i = 0; i < (*shadows)->dibheader.pixelarraysize; i++){
+/* debugging function: TODO delete later! */
+void
+printmat(int **mat, int rows, int cols){
+	int i, j;
+
+	for(i = 0; i < rows; i++){
+		printf("|");
+		for(j = 0; j < cols; j++){
+			printf("%d ", mat[i][j]);
+		}
+		printf("|\n");
+	}
+}
+
+void
+findcoefficients(int **mat, int r){
+	int i, j, k, a, temp;
+
+	/* take matrix to echelon form */
+	for(j = 0; j < r-1; j++){
+		for(i = r-1; i > j; i--){
+			a = mat[i][j] * modinv[mat[i-1][j]];
+			for(k = j; k < r+1; k++){
+				temp = mat[i][k] - ((mat[i-1][k] * a) % PRIME);
+				mat[i][k] = mod(temp, PRIME);
+			}
+		}
+	}
+
+	/* take matrix to reduced row echelon form */
+	for(i = r-1; i > 0; i--){
+		mat[i][r] = (mat[i][r] * modinv[mat[i][i]]) % PRIME;
+		mat[i][i] = 1;
+		for(k = i-1; k >= 0; k--){
+			temp = mat[k][r] - ((mat[i][r] * mat[k][i]) % PRIME);
+			mat[k][r] = mod(temp, PRIME);
+			mat[k][i] = 0;
+		}
+	}
+}
+
+void
+revealsecret(Bitmap **shadows, int r, int width, int height){
+	int i, j, k, t, value;
+	int pixels = (*shadows)->dibheader.pixelarraysize;
+	Bitmap *sp;
+	Bitmap *bmp = newbitmap(width, height);
+
+	int **mat = xmalloc(sizeof(*mat) * r);
+	for(i = 0; i < r; i++)
+		mat[i] = xmalloc(sizeof(**mat) * (r+1));
+
+	for(i = 0; i < pixels; i++){
 		for(j = 0; j < r; j++){
 			sp = shadows[j];
 			value = sp->bmpheader.unused2;
 			mat[j][0] = 1;
 			for(k = 1; k < r; k++){
 				mat[j][k] = value;
-				value *= value;
+				value *= sp->bmpheader.unused2;
 			}
 			mat[j][r] = sp->imgpixels[i];
 		}
-		revealpixels(mat, r);
+		findcoefficients(mat, r);
 		for(t = i * r; t < (i+1) * r; t++){
 			bmp->imgpixels[t] = mat[t % r][r];
 		}
-	}
-//	permutepixels(bmp);
+	} 
+	unpermutepixels(bmp);
 	bmptofile(bmp, "revealed.bmp");
+
+	for(i = 0; i < r; i++)
+		free(mat[i]);
+	free(mat);
+	freebitmap(bmp);
 }
 
 int
@@ -545,23 +567,20 @@ main(int argc, char *argv[]){
 	/* keep program name for usage() */
 	argv0 = argv[0]; 
 
-	int r = 2, n = 4; /* TODO receive as parameter and parse */
+	/* TODO receive as parameter and parse */
+	int r = 8, n = 8, width = 512, height = 512, seed = 7;
 
 	filename = argv[1];
 	Bitmap *bp = loadbmp(filename, r);
 	truncategrayscale(bp);
-//	permutepixels(bp);
+	generatepermutation(bmpimagesize(bp), seed);
+	permutepixels(bp);
 	Bitmap **shadows = formshadows(bp, r, n);
 
-	reveal(shadows, r);
+	revealsecret(shadows, r, width, height);
 
-	/* /1* write shadows to disk *1/ */
-	/* for(n -= 1; n >= 0; n--){ */
-	/* 	snprintf(filename, 256, "shadow%d.bmp", n); */
-	/* 	printf("%s\n", filename); */
-	/* 	bmptofile(shadows[n], filename); */
-	/* 	freebitmap(shadows[n]); */ 
-	/* } */
-	/* freebitmap(bp); */
-	/* free(shadows); */
+	for(n -= 1; n >= 0; n--)
+		freebitmap(shadows[n]); 
+	free(shadows);
+	freebitmap(bp);
 }
