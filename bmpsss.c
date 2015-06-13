@@ -13,6 +13,8 @@
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
 #define PRIME                  251
+#define RIGHTMOST_BIT_ON(x)    (x) |= 0x01
+#define RIGHTMOST_BIT_OFF(x)   (x) &= 0xFE
 
 typedef struct {
 	uint8_t id[2];     /* magic number to identify the BMP format */
@@ -72,19 +74,17 @@ static Bitmap   *loadbmp(const char *filename, int r);
 static int      bmpimagesize(Bitmap *bp);
 static void     bmptofile(Bitmap *bp, const char *filename);
 static void     truncategrayscale(Bitmap *bp);
-static void     generatepermutation(int imgsize, int seed);
-static void     permutepixels(Bitmap *bp);
-static void     unpermutepixels(Bitmap *bp);
+static void     permutepixels(Bitmap *bp, unsigned int seed);
+static void     unpermutepixels(Bitmap *bp, unsigned int seed);
 static uint8_t  generatepixel(const uint8_t *coeff, int degree, int value);
 static void     findclosestpair(int value, uint16_t *v1, uint16_t *v2);
-static Bitmap   *newshadow(uint16_t width, uint16_t height, uint16_t shadownumber);
-static Bitmap   **formshadows(Bitmap *bp, int r, int n);
+static Bitmap   *newshadow(uint16_t width, uint16_t height, unsigned int seed, uint16_t shadownumber);
+static Bitmap   **formshadows(Bitmap *bp, unsigned int seed, int r, int n);
 static void     findcoefficients(int **mat, int r);
 static void     revealsecret(Bitmap **shadows, int r, int width, int height);
 
 /* globals */
-static char *argv0; /* program name for usage() */
-static int *permutationseq; /* shadow width */
+static char *argv0;                /* program name for usage() */
 static const int modinv[PRIME] = { /* modular multiplicative inverse */
 	0, 1, 126, 84, 63, 201, 42, 36, 157, 28, 226, 137, 21, 58, 18, 67, 204,
 	192, 14, 185, 113, 12, 194, 131, 136, 241, 29, 93, 9, 26, 159, 81, 102,
@@ -129,7 +129,7 @@ xfopen (const char *filename, const char *mode){
 	FILE *fp = fopen(filename, mode);
 
 	if(!fp) 
-		die("couldn't open %s", filename);
+		die("couldn't open %s\n", filename);
 
 	return fp;
 }
@@ -143,13 +143,13 @@ xfclose (FILE *fp){
 void
 xfread(void *ptr, size_t size, size_t nmemb, FILE *stream){
 	if (fread(ptr, size, nmemb, stream) < 1)
-		die("read error"); /* TODO print errno string! */
+		die("fread: error\n"); /* TODO print errno string! */
 }
 
 void 
 xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream){
 	if (fwrite(ptr, size, nmemb, stream) != nmemb)
-		die("Error in writing or end of file.\n");
+		die("fwrite: error in writing or end of file.\n");
 }
 
 void
@@ -392,36 +392,32 @@ truncategrayscale(Bitmap *bp){
 }
 
 void
-generatepermutation(int imgsize, int seed){
-	int i;
-	srand(seed);
-
-	permutationseq = xmalloc(sizeof(*permutationseq) * imgsize);
-
-	for(i = imgsize - 1; i > 0; i--)
-		permutationseq[i] = randint(i);
-}
-
-void
-permutepixels(Bitmap *bp){
+permutepixels(Bitmap *bp, unsigned int seed){
 	int i, j;
 	uint8_t *p = bp->imgpixels;
 	int imgsize = bmpimagesize(bp);
 
 	for(i = imgsize - 1; i > 1; i--){
-		j = permutationseq[i];
+		/* j = permutationseq[i]; */
+		j = randint(i);
 		swap(&p[j], &p[i]);
 	}
 }
 
 void
-unpermutepixels(Bitmap *bp){
+unpermutepixels(Bitmap *bp, unsigned int seed){
 	int i, j;
 	uint8_t *p = bp->imgpixels;
 	int imgsize = bmpimagesize(bp);
+	int *permseq = xmalloc(sizeof(*permseq) * imgsize);
+
+	srand(seed);
+
+	for(i = imgsize - 1; i > 0; i--)
+		permseq[i] = randint(i);
 
 	for(i = 1 ; i < imgsize - 1; i++){
-		j = permutationseq[i];
+		j = permseq[i];
 		swap(&p[j], &p[i]);
 	}
 }
@@ -452,7 +448,7 @@ findclosestpair(int x, uint16_t *width, uint16_t *height){
 }
 
 Bitmap *
-newshadow(uint16_t width, uint16_t height, uint16_t shadownumber){
+newshadow(uint16_t width, uint16_t height, unsigned int seed, uint16_t shadownumber){
 	Bitmap *bmp = newbitmap(width, height);
 	bmp->bmpheader.unused2 = shadownumber;
 
@@ -460,7 +456,7 @@ newshadow(uint16_t width, uint16_t height, uint16_t shadownumber){
 }
 
 Bitmap **
-formshadows(Bitmap *bp, int r, int n){
+formshadows(Bitmap *bp, unsigned int seed, int r, int n){
 	uint16_t width, height;
 	uint8_t *coeff;
 	int i, j;
@@ -470,7 +466,7 @@ formshadows(Bitmap *bp, int r, int n){
 	findclosestpair(totalpixels/r, &width, &height);
 
 	for(i = 0; i < n; i++)
-		shadows[i] = newshadow(width, height, i+1);
+		shadows[i] = newshadow(width, height, seed, i+1);
 
 	/* generate shadow image pixels */
 	for(j = 0; j*r < totalpixels; j++){
@@ -526,10 +522,10 @@ findcoefficients(int **mat, int r){
 
 void
 revealsecret(Bitmap **shadows, int r, int width, int height){
-	int i, j, k, t, value;
+	int i, j, k, value;
 	int pixels = (*shadows)->dibheader.pixelarraysize;
-	Bitmap *sp;
 	Bitmap *bmp = newbitmap(width, height);
+	Bitmap *sp;
 
 	int **mat = xmalloc(sizeof(*mat) * r);
 	for(i = 0; i < r; i++)
@@ -547,11 +543,11 @@ revealsecret(Bitmap **shadows, int r, int width, int height){
 			mat[j][r] = sp->imgpixels[i];
 		}
 		findcoefficients(mat, r);
-		for(t = i * r; t < (i+1) * r; t++){
-			bmp->imgpixels[t] = mat[t % r][r];
+		for(j = i * r; j < (i+1) * r; j++){
+			bmp->imgpixels[j] = mat[j % r][r];
 		}
 	} 
-	unpermutepixels(bmp);
+	/* unpermutepixels(bmp, sp->bmpheader.unused1); */
 	bmptofile(bmp, "revealed.bmp");
 
 	for(i = 0; i < r; i++)
@@ -560,27 +556,86 @@ revealsecret(Bitmap **shadows, int r, int width, int height){
 	freebitmap(bmp);
 }
 
+void
+hideshadow(Bitmap *bp, Bitmap *shadow){
+	int pixels = bmpimagesize(shadow);
+	int i, j;
+	uint8_t byte;
+	char shadowfilename[20] = {0};
+	
+	bp->bmpheader.unused1 = shadow->bmpheader.unused1;
+	bp->bmpheader.unused2 = shadow->bmpheader.unused2;
+	snprintf(shadowfilename, 20, "shadow%d.bmp", shadow->bmpheader.unused2);
+	printf("%s\n", shadowfilename);
+
+	for(i = 0; i < pixels; i++){
+		byte = shadow->imgpixels[i];
+		for(j = i*8; j < 8*(i+1); j++){
+			if(byte & 0x80) /* 1000 0000 */
+				RIGHTMOST_BIT_ON(bp->imgpixels[j]);
+			else
+				RIGHTMOST_BIT_OFF(bp->imgpixels[j]);
+			byte <<= 1;
+		}
+	}
+	bmptofile(bp, shadowfilename);
+}
+
+/* width and height parameters needed because the image hiding the shadow could
+ * be bigger than necessary */
+Bitmap *
+retrieveshadow(Bitmap *bp, uint16_t width, uint16_t height, int r){
+	int i, j;
+	uint8_t byte, mask;
+
+	if(bp->dibheader.width * bp->dibheader.height < ((width * height)*8)/r)
+		die("image of %d pixels can't contain shadow of %d pixels\n",
+				bp->dibheader.width * bp->dibheader.height, ((width * height)*8)/r);
+
+	findclosestpair((width * height)/r, &width, &height);
+	Bitmap *shadow = newshadow(width, height, bp->bmpheader.unused1, bp->bmpheader.unused2);
+	int shadowpixels = shadow->dibheader.pixelarraysize;
+
+	for(i = 0; i < shadowpixels; i++){
+		byte = 0;
+		mask = 0x80; /* 1000 0000 */
+		for(j = i*8; j < 8*(i+1); j++){
+			if(bp->imgpixels[j] & 0x01)
+				byte |= mask;
+			mask >>= 1;
+		}
+		shadow->imgpixels[i] = byte;
+	}
+
+	return shadow;
+}
+
 int
 main(int argc, char *argv[]){
 	char *filename;
+	int i;
 
 	/* keep program name for usage() */
 	argv0 = argv[0]; 
 
 	/* TODO receive as parameter and parse */
-	int r = 8, n = 8, width = 512, height = 512, seed = 7;
+	int r = 8, n = 8, width = 300, height = 300, seed = 7;
 
 	filename = argv[1];
-	Bitmap *bp = loadbmp(filename, r);
-	truncategrayscale(bp);
-	generatepermutation(bmpimagesize(bp), seed);
-	permutepixels(bp);
-	Bitmap **shadows = formshadows(bp, r, n);
+	Bitmap **bmps = xmalloc(sizeof(*bmps) * r);
 
-	revealsecret(shadows, r, width, height);
+	for(i = 0; i < r; i++){
+		bmps[i] = loadbmp(argv[i+1], r);
+		bmps[i] = retrieveshadow(bmps[i], width, height, r);
+	}
 
-	for(n -= 1; n >= 0; n--)
-		freebitmap(shadows[n]); 
-	free(shadows);
-	freebitmap(bp);
+	/* truncategrayscale(bp); */
+	/* Bitmap **shadows = formshadows(bp, r, n); */
+
+	revealsecret(bmps, r, width, height);
+
+	/* for(n -= 1; n >= 0; n--) */
+	/* 	freebitmap(shadows[n]); */ 
+	/* free(shadows); */
+	/* freebitmap(bp); */
 }
