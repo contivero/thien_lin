@@ -4,8 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <dirent.h>
 
+#define BMP_MAGIC_NUMBER       0x4D42
 #define BMP_HEADER_SIZE        14
 #define DIB_HEADER_SIZE        40
 #define PALETTE_SIZE           1024
@@ -15,6 +16,7 @@
 #define PRIME                  251
 #define RIGHTMOST_BIT_ON(x)    (x) |= 0x01
 #define RIGHTMOST_BIT_OFF(x)   (x) &= 0xFE
+#define MIN_ARGC               6
 
 typedef struct {
 	uint8_t id[2];     /* magic number to identify the BMP format */
@@ -40,10 +42,10 @@ typedef struct {
 } DIBheader;
 
 typedef struct {
-	BMPheader bmpheader;   /* 14 bytes bmp starting header */
-	DIBheader dibheader;   /* 40 bytes dib header */
-	uint8_t palette[1024]; /* color palette; mandatory for depth <= 8  */
-	uint8_t *imgpixels;    /* array of bytes representing each pixel */
+	BMPheader bmpheader;           /* 14 bytes bmp starting header */
+	DIBheader dibheader;           /* 40 bytes dib header */
+	uint8_t palette[PALETTE_SIZE]; /* color palette; mandatory for depth <= 8 */
+	uint8_t *imgpixels;            /* array of bytes representing each pixel */
 } Bitmap;
 
 /* prototypes */ 
@@ -53,9 +55,10 @@ static FILE     *xfopen(const char *filename, const char *mode);
 static void     xfclose(FILE *fp);
 static void     xfread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 static void     xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+static DIR      *xopendir(const char *name);
 static void     usage(void);
 static void     swap(uint8_t *s, uint8_t *t);
-static int      mod(int dividend, int divisor);
+static int      mod(int a, int b);
 static double   randnormalize(void);
 static long     randint(long int max);
 static uint32_t get32bitsfromheader(FILE *fp, int offset);
@@ -68,9 +71,8 @@ static void     readbmpheader(Bitmap *bp, FILE *fp);
 static void     writebmpheader(Bitmap *bp, FILE *fp);
 static void     readdibheader(Bitmap *bp, FILE *fp);
 static void     writedibheader(Bitmap *bp, FILE *fp);
-static Bitmap   *bmpfromfile(FILE *fp);
-static void     validate_r(FILE *fp, int r);
-static Bitmap   *loadbmp(const char *filename, int r);
+static Bitmap   *bmpfromfile(const char *filename);
+static int      validate_k(FILE *fp, int r);
 static int      bmpimagesize(Bitmap *bp);
 static void     bmptofile(Bitmap *bp, const char *filename);
 static void     truncategrayscale(Bitmap *bp);
@@ -81,7 +83,7 @@ static void     findclosestpair(int value, uint16_t *v1, uint16_t *v2);
 static Bitmap   *newshadow(uint16_t width, uint16_t height, unsigned int seed, uint16_t shadownumber);
 static Bitmap   **formshadows(Bitmap *bp, unsigned int seed, int r, int n);
 static void     findcoefficients(int **mat, int r);
-static void     revealsecret(Bitmap **shadows, int r, int width, int height);
+static void     revealsecret(Bitmap **shadows, int r, uint16_t width, uint16_t height, const char *filename);
 
 /* globals */
 static char *argv0;                /* program name for usage() */
@@ -129,7 +131,7 @@ xfopen (const char *filename, const char *mode){
 	FILE *fp = fopen(filename, mode);
 
 	if(!fp) 
-		die("couldn't open %s\n", filename);
+		die("fopen: couldn't open %s\n", filename);
 
 	return fp;
 }
@@ -137,13 +139,13 @@ xfopen (const char *filename, const char *mode){
 void
 xfclose (FILE *fp){
 	if(fclose(fp) == EOF)
-		die("couldn't close file\n");
+		die("fclose: error\n");
 }
 
 void
 xfread(void *ptr, size_t size, size_t nmemb, FILE *stream){
 	if (fread(ptr, size, nmemb, stream) < 1)
-		die("fread: error\n"); /* TODO print errno string! */
+		die("fread: error\n");
 }
 
 void 
@@ -152,10 +154,20 @@ xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream){
 		die("fwrite: error in writing or end of file.\n");
 }
 
+DIR *
+xopendir(const char *name){
+	DIR *dp = opendir(name);
+
+	if(!dp)
+		die("opendir: error\n");
+
+	return dp;
+}
+
 void
 usage(void){
-	die("usage: %s -(d|r) -secret image -k number [-n number|-dir directory]\n"
-		"2 <= k <= n; 2 <= n\n", argv0);
+	die("usage: %s -(d|r) -secret image -k number -w width -h height -s seed"
+	    "[-n number] [-dir directory]\n", argv0);
 }
 
 void
@@ -168,20 +180,20 @@ swap(uint8_t *s, uint8_t *t){
 }
 
 int
-mod(int dividend, int divisor){
-	int modulus = dividend % divisor;
+mod(int a, int b){
+	int m = a % b;
 
-	return modulus > 0 ? modulus : modulus + divisor;
+	return m > 0 ? m : m + b;
 }
 
 double 
 randnormalize(void){
-	return rand()/((double)RAND_MAX+1);
+	return rand()/((double)RAND_MAX + 1);
 }
 
 long
 randint(long int max){
-	return (long) (randnormalize()*(max+1)); /*returns num in [0,max]*/
+	return (long) (randnormalize()*(max+1)); /*returns num in [0, max]*/
 } 
 
 uint32_t
@@ -190,7 +202,7 @@ get32bitsfromheader(FILE *fp, int offset){
 	uint32_t pos = ftell(fp);
 
 	fseek(fp, offset, SEEK_SET);
-	xfread(&value, 4, 1, fp);
+	xfread(&value, sizeof(uint32_t), 1, fp);
 	fseek(fp, pos, SEEK_SET);
 
 	return value;
@@ -324,7 +336,8 @@ writedibheader(Bitmap *bp, FILE *fp){
 }
 
 Bitmap *
-bmpfromfile(FILE *fp){
+bmpfromfile(const char *filename){
+	FILE *fp = xfopen(filename, "r");
 	Bitmap *bp = xmalloc(sizeof(*bp));
 
 	readbmpheader(bp, fp);
@@ -335,37 +348,25 @@ bmpfromfile(FILE *fp){
 	dibheaderdebug(bp);
 
 	/* read color palette */
-	xfread(bp->palette, 1, PALETTE_SIZE, fp);
+	xfread(bp->palette, sizeof(bp->palette), PALETTE_SIZE, fp);
 
 	/* read pixel data */
 	int imagesize = bmpimagesize(bp);
 	bp->imgpixels = xmalloc(imagesize);
-	xfread(bp->imgpixels, 1, imagesize, fp);
+	xfread(bp->imgpixels, sizeof(bp->imgpixels), imagesize, fp);
 
+	xfclose(fp);
 	return bp;
 }
 
-void
-validate_r(FILE *fp, int r){
+int
+validate_k(FILE *fp, int r){
 	int width  = bmpfilewidth(fp);
 	int height = bmpfileheight(fp);
 	int pixels = width * height;
 	int aux    = pixels / r;
 
-	if(pixels != aux * r)
-		die("Can't divide %dx%d image by %d. Choose another r\n", 
-				width, height, r);
-}
-
-Bitmap *
-loadbmp(const char *filename, int r){
-	FILE *fp = xfopen(filename, "r");
-
-	validate_r(fp, r);
-	Bitmap *bmp = bmpfromfile(fp);
-	xfclose(fp);
-
-	return bmp;
+	return pixels == aux * r;
 }
 
 int
@@ -397,8 +398,8 @@ permutepixels(Bitmap *bp, unsigned int seed){
 	uint8_t *p = bp->imgpixels;
 	int imgsize = bmpimagesize(bp);
 
+	srand(seed);
 	for(i = imgsize - 1; i > 1; i--){
-		/* j = permutationseq[i]; */
 		j = randint(i);
 		swap(&p[j], &p[i]);
 	}
@@ -412,7 +413,6 @@ unpermutepixels(Bitmap *bp, unsigned int seed){
 	int *permseq = xmalloc(sizeof(*permseq) * imgsize);
 
 	srand(seed);
-
 	for(i = imgsize - 1; i > 0; i--)
 		permseq[i] = randint(i);
 
@@ -420,6 +420,7 @@ unpermutepixels(Bitmap *bp, unsigned int seed){
 		j = permseq[i];
 		swap(&p[j], &p[i]);
 	}
+	free(permseq);
 }
 
 /* uses coeff[0] to coeff[degree] to evaluate the corresponding
@@ -479,20 +480,6 @@ formshadows(Bitmap *bp, unsigned int seed, int r, int n){
 	return shadows;
 }
 
-/* debugging function: TODO delete later! */
-void
-printmat(int **mat, int rows, int cols){
-	int i, j;
-
-	for(i = 0; i < rows; i++){
-		printf("|");
-		for(j = 0; j < cols; j++){
-			printf("%d ", mat[i][j]);
-		}
-		printf("|\n");
-	}
-}
-
 void
 findcoefficients(int **mat, int r){
 	int i, j, k, a, temp;
@@ -521,7 +508,7 @@ findcoefficients(int **mat, int r){
 }
 
 void
-revealsecret(Bitmap **shadows, int r, int width, int height){
+revealsecret(Bitmap **shadows, int r, uint16_t width, uint16_t height, const char *filename){
 	int i, j, k, value;
 	int pixels = (*shadows)->dibheader.pixelarraysize;
 	Bitmap *bmp = newbitmap(width, height);
@@ -548,7 +535,7 @@ revealsecret(Bitmap **shadows, int r, int width, int height){
 		}
 	} 
 	/* unpermutepixels(bmp, sp->bmpheader.unused1); */
-	bmptofile(bmp, "revealed.bmp");
+	bmptofile(bmp, filename);
 
 	for(i = 0; i < r; i++)
 		free(mat[i]);
@@ -584,11 +571,11 @@ hideshadow(Bitmap *bp, Bitmap *shadow){
 /* width and height parameters needed because the image hiding the shadow could
  * be bigger than necessary */
 Bitmap *
-retrieveshadow(Bitmap *bp, uint16_t width, uint16_t height, int r){
+retrieveshadow(Bitmap *bp, uint16_t width, uint16_t height, uint16_t r){
 	int i, j;
 	uint8_t byte, mask;
 
-	if(bp->dibheader.width * bp->dibheader.height < ((width * height)*8)/r)
+	if(bp->dibheader.width * bp->dibheader.height < (uint32_t)(((width * height)*8)/r))
 		die("image of %d pixels can't contain shadow of %d pixels\n",
 				bp->dibheader.width * bp->dibheader.height, ((width * height)*8)/r);
 
@@ -611,31 +598,217 @@ retrieveshadow(Bitmap *bp, uint16_t width, uint16_t height, int r){
 }
 
 int
-main(int argc, char *argv[]){
-	char *filename;
-	int i;
+isvalidbmp(char *filename, uint16_t k){
+	FILE *fp = xfopen(filename, "r");
+	int valid_k;
+	uint16_t magicnumber;
 
-	/* keep program name for usage() */
-	argv0 = argv[0]; 
+	xfread(&magicnumber, sizeof(magicnumber), 1, fp);
+	valid_k = validate_k(fp, k);
 
-	/* TODO receive as parameter and parse */
-	int r = 8, n = 8, width = 300, height = 300, seed = 7;
+	xfclose(fp);
 
-	filename = argv[1];
-	Bitmap **bmps = xmalloc(sizeof(*bmps) * r);
+	return magicnumber == BMP_MAGIC_NUMBER && valid_k;
+}
 
-	for(i = 0; i < r; i++){
-		bmps[i] = loadbmp(argv[i+1], r);
-		bmps[i] = retrieveshadow(bmps[i], width, height, r);
+int
+isvalidshadow(char *filename, uint16_t k){
+	FILE *fp = xfopen(filename, "r");
+	uint16_t shadownumber;
+
+	xfread(&shadownumber, sizeof(shadownumber), 1, fp);
+	xfclose(fp);
+
+	return shadownumber && isvalidbmp(filename, k);
+}
+
+void 
+getvalidatedfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(char *, uint16_t)){
+	struct dirent *d;
+	DIR *dp = xopendir(dir);
+	char filepath[255] = {0};
+	int i = 0;
+
+	while((d = readdir(dp)) && i < n){
+		if(d->d_type == DT_REG){ 
+			snprintf(filepath, 255, "%s/%s", dir, d->d_name);
+			if(isvalid(filepath, k)){
+				filenames[i] = xmalloc(strlen(filepath) + 1);
+				strcpy(filenames[i], filepath);
+				i++;
+			}
+		}
 	}
 
-	/* truncategrayscale(bp); */
-	/* Bitmap **shadows = formshadows(bp, r, n); */
+	if(i < n)
+		die("not enough valid bmp images for n = %d and k = %d", n, k);
 
-	revealsecret(bmps, r, width, height);
+	closedir(dp);
+}
 
-	/* for(n -= 1; n >= 0; n--) */
-	/* 	freebitmap(shadows[n]); */ 
-	/* free(shadows); */
-	/* freebitmap(bp); */
+void
+getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n){
+	getvalidatedfilenames(filenames, dir, k, n, isvalidbmp);
+}
+
+void
+getshadowfilenames(char **filenames, char *dir, uint16_t k){
+	getvalidatedfilenames(filenames, dir, k, k, isvalidshadow);
+}
+
+void
+distributeimage(uint16_t k, uint16_t n, uint16_t seed, char *imgpath, char *dir){
+	char **filepaths = xmalloc(sizeof(*filepaths) * n);
+	Bitmap *bp, **shadows;
+	int i;
+
+	getbmpfilenames(filepaths, dir, k, n);
+	bp = bmpfromfile(imgpath);
+	shadows = formshadows(bp, seed, k, n);
+
+	for(i = 0; i < n; i++){
+		bp = bmpfromfile(filepaths[i]);
+		hideshadow(bp, shadows[i]);
+	}
+
+	for(i = 0; i < n; i++){
+		free(filepaths[i]);
+		freebitmap(shadows[i]);
+	}
+	free(filepaths);
+	free(shadows);
+}
+
+void
+recoverimage(uint16_t k, uint16_t width, uint16_t height, char *filename, char *dir){
+	char **filepaths = xmalloc(sizeof(*filepaths) * k);
+	Bitmap **shadows = xmalloc(sizeof(*shadows) * k);
+	Bitmap *bp;
+	int i;
+
+	getshadowfilenames(filepaths, dir, k);
+	for(i = 0; i < k; i++){
+		bp = bmpfromfile(filepaths[i]);
+		shadows[i] = retrieveshadow(bp, width, height, k);
+		freebitmap(bp);
+	}
+	revealsecret(shadows, k, width, height, filename);
+
+	for(i = 0; i < k; i++){
+		free(filepaths[i]);
+		freebitmap(shadows[i]);
+	}
+	free(filepaths);
+	free(shadows);
+}
+
+int
+countfiles(const char *dirname){
+	int filecount = 0;
+	struct dirent *d;
+	DIR *dp = xopendir(dirname);
+
+	while((d = readdir(dp)))
+		if(d->d_type == DT_REG) /* If the entry is a regular file */
+			filecount++;				
+	closedir(dp);
+
+	return filecount;
+}
+
+int
+main(int argc, char *argv[]){
+	char *filename, *dir;
+	int distribute, mustcountfiles;
+	int argnum;
+	uint16_t width, height, seed;
+	uint16_t k, n;
+
+	argv0 = argv[0]; /* save program name for usage() */
+
+	if(argc < MIN_ARGC)
+		usage();
+
+	if(strcmp(argv[1], "-d") == 0)
+		distribute = 1;
+	else if(strcmp(argv[1], "-r") == 0) 
+		distribute = 0;
+	else
+		usage();
+
+	if(strcmp(argv[2], "-secret") == 0)
+		filename = argv[3];
+	else
+		usage();
+
+	if(strcmp(argv[4], "-k") == 0)
+		k = atoi(argv[5]);
+
+	argnum = 6;
+	if(!distribute){
+		if(argc <= argnum + 4)
+			die("specify width and height with -w -h\n");
+		if(strcmp(argv[argnum], "-w") == 0){
+			argnum++;
+			width = atoi(argv[argnum]);
+			argnum++;
+		}
+		if(strcmp(argv[argnum], "-h") == 0){
+			argnum++;
+			height = atoi(argv[argnum]);
+			argnum++;
+		}
+	} else {
+		if(argc <= argnum + 2 || strcmp(argv[argnum], "-s") != 0)
+			die("specify seed with -s\n");
+		argnum++;
+		seed = atoi(argv[argnum]);
+		argnum++;
+	}
+
+	if(width == 0)
+		die("width must be a positive integer");
+	if(height == 0)
+		die("height must be a positive integer");
+
+	if(argc == argnum){
+		dir = ".";
+		n = countfiles(dir);
+		goto run;
+	}
+
+	/* parse optional parameters */
+	if(strcmp(argv[argnum], "-n") == 0){
+		argnum++;
+		if(!distribute)
+			die("can only use -n when not using -d\n");
+		else if(argnum <= argc){
+			n = atoi(argv[argnum]);
+			argnum++;
+		}
+	} else {
+		mustcountfiles = 1;
+	}
+
+	if(strcmp(argv[argnum], "-dir") == 0){
+		argnum++;
+		if(argnum <= argc)
+			dir = argv[argnum];
+		else
+			usage();
+	}
+
+	if(mustcountfiles)
+		n = countfiles(dir);
+
+run:
+	if(k > n || k < 2 || n < 2)
+		die("k and n must be: 2 <= k <= n\n");
+
+	if(distribute)
+		distributeimage(k, n, seed, filename, dir);
+	else
+		recoverimage(k, width, height, filename, dir);
+
+	return EXIT_SUCCESS;
 }

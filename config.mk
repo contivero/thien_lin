@@ -5,7 +5,7 @@
 
 CC      = gcc
 LDFLAGS = -lm -s
-CFLAGS  = -std=c99 -pedantic -O0 \
+CFLAGS  = -D_GNU_SOURCE -std=c99 -pedantic -O0
 
 #CFLAGS = -static -std=c99 -pedantic -Wall -Wextra -Wunused-macros \
 	-Wno-missing-braces -Wno-missing-field-initializers -Wformat=2 \
@@ -13,6 +13,6 @@ CFLAGS  = -std=c99 -pedantic -O0 \
 	-Wbad-function-cast -Wstrict-overflow=5 -Wstrict-prototypes -Winline \
 	-Wundef -Wnested-externs -Wcast-qual -Wshadow -Wunreachable-code \
 	-Wlogical-op -Wfloat-equal -Wstrict-aliasing=2 -Wredundant-decls \
-	-Wold-style-definition -Werror \
+	-Wold-style-definition -Werror -Wuninitialized\
 	-O0 \
 
