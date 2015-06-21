@@ -13,6 +13,7 @@ $(SRC_DIR)/obj/%.o: $(SRC_DIR)/%.c
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 bmpsss.out: $(OBJ)
+	mkdir -p $(BIN_DIR)
 	$(CC) -o $(BIN_DIR)/$@ $^ $(LDFLAGS)
 
 options:
