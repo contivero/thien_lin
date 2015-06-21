@@ -1,27 +1,29 @@
 include config.mk
 
 SRC = bmpsss.c
-OBJ = ${SRC:.c=.o}
+SRC_DIR = src
+BIN_DIR = bin
+C_FILES = $(wildcard $(SRC_DIR)/*.c)
 
-all: options bmpsss
+OBJ = $(addprefix $(SRC_DIR)/obj/, $(notdir $(C_FILES:.c=.o)))
+
+
+$(SRC_DIR)/obj/%.o: $(SRC_DIR)/%.c
+	mkdir -p $(SRC_DIR)/obj
+	$(CC) -c -o $@ $< $(CFLAGS)
+
+bmpsss.out: $(OBJ)
+	mkdir -p $(BIN_DIR)
+	$(CC) -o $(BIN_DIR)/$@ $^ $(LDFLAGS)
 
 options:
 	@echo bmpsss build options:
 	@echo "CC     = ${CC}"
 	@echo "CFLAGS = ${CFLAGS}"
 
-.c.o:
-	@echo CC $<
-	@${CC} -c ${CFLAGS} $<
-
-${OBJ}: config.mk
-
-bmpsss: ${OBJ}
-	@echo CC -o $@
-	@${CC} -o $@ ${OBJ} ${LDFLAGS}
-
 clean:
-	@echo cleaning
-	@rm -f bmpsss ${OBJ}
+	@echo cleaning...
+	rm -f $(BIN_DIR)/*
+	rm -f -r $(SRC_DIR)/obj
 
-.PHONY: all options clean
+.PHONY: options clean
