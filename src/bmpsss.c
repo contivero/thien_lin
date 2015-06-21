@@ -859,10 +859,10 @@ main(int argc, char *argv[]){
 	if((rflag && !(wflag && hflag)) || !width || !height)
 		die("specify a positive width and height with -w -h for the revealed image\n");
 
+	if(!dirflag)
+		dir = "./";
 	if(!nflag)
 		n = countfiles(dir);
-	if(!dirflag)
-		dir = ".";
 	if(!sflag)
 		seed = DEFAULT_SEED;
 
@@ -870,7 +870,8 @@ main(int argc, char *argv[]){
 		die("k and n must be: 2 <= k <= n\n");
 	if(dflag && rflag)
 		die("can't use -d and -r flags simultaneously\n");
-
+	//printf("%s\n",dir);
+	//printf("%d\n",dirflag);
 	if(dflag)
 		distributeimage(k, n, seed, filename, dir);
 	else if(rflag)
