@@ -7,7 +7,6 @@
 #include <dirent.h>
 
 #define BMP_HEADER_SIZE        14
-#define UNUSED2_OFFSET         8
 #define DIB_HEADER_SIZE        40
 #define PALETTE_SIZE           1024
 #define PIXEL_ARRAY_OFFSET     BMP_HEADER_SIZE + DIB_HEADER_SIZE + PALETTE_SIZE
@@ -71,6 +70,8 @@ static uint32_t bmpfileheight(FILE *fp);
 static void     initpalette(uint8_t palette[]);
 static Bitmap   *newbitmap(uint32_t width, uint32_t height);
 static void     freebitmap(Bitmap *bp);
+static void     changeheaderendianness(BMPheader *h);
+static void     changedibendianness(DIBheader *h);
 static void     readbmpheader(Bitmap *bp, FILE *fp);
 static void     writebmpheader(Bitmap *bp, FILE *fp);
 static void     readdibheader(Bitmap *bp, FILE *fp);
@@ -92,7 +93,7 @@ static void     hideshadow(Bitmap *bp, Bitmap *shadow);
 static Bitmap   *retrieveshadow(Bitmap *bp, uint32_t width, uint32_t height, uint16_t k);
 static int      isvalidbmp(const char *filename, uint16_t k);
 static int      isvalidshadow(const char *filename, uint16_t k);
-static void     getvalidatedfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(const char *, uint16_t));
+static void     getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(const char *, uint16_t));
 static void     getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n);
 static void     getshadowfilenames(char **filenames, char *dir, uint16_t k);
 static void     distributeimage(uint16_t k, uint16_t n, uint16_t seed, char *imgpath, char *dir);
@@ -117,7 +118,7 @@ static const int modinv[PRIME] = { /* modular multiplicative inverse */
 	73, 79, 161, 111, 187, 5, 210, 183, 16, 60, 145, 154, 35, 245, 202, 69,
 	148, 33, 156, 244, 43, 155, 38, 149, 170, 92, 225, 242, 158, 222, 10, 115,
 	120, 57, 239, 138, 66, 237, 59, 47, 184, 233, 193, 230, 114, 25, 223, 94,
-	215, 209, 50, 188, 167, 125
+	215, 209, 50, 188, 167, 125, 250
 };
 
 int
@@ -134,10 +135,10 @@ uint16swap(uint16_t *x){
 
 inline void
 uint32swap(uint32_t *x){
-    *x = ((*x & (uint32_t) 0x000000FFU) << 24) |
-		 ((*x & (uint32_t) 0x0000FF00U) <<  8) |
-		 ((*x & (uint32_t) 0x00FF0000U) >>  8) |
-		 ((*x & (uint32_t) 0xFF000000U) >> 24);
+	*x = ((*x & (uint32_t) 0x000000FFU) << 24) |
+		((*x & (uint32_t) 0x0000FF00U) <<  8) |
+		((*x & (uint32_t) 0x00FF0000U) >>  8) |
+		((*x & (uint32_t) 0xFF000000U) >> 24);
 }
 
 void
@@ -217,7 +218,7 @@ int
 mod(int a, int b){
 	int m = a % b;
 
-	return m > 0 ? m : m + b;
+	return m < 0 ? m + b : m;
 }
 
 double 
@@ -302,26 +303,7 @@ freebitmap(Bitmap *bp){
 }
 
 void
-bmpheaderdebug(Bitmap *bp){
-	printf("ID: %c%-15c size: %-16d r1: %-16d r2: %-16d offset: %-16d\n",
-			bp->bmpheader.id[0], bp->bmpheader.id[1], bp->bmpheader.size, 
-			bp->bmpheader.unused1, bp->bmpheader.unused2, bp->bmpheader.offset);
-}
-
-void
-dibheaderdebug(Bitmap *bp){
-	printf("dibsize: %-16d width: %-16d height: %-16d\n" 
-			"nplanes: %-16d depth: %-16d compression:%-16d\n"
-			"pixelarraysize: %-16d hres: %-16d vres:%-16d\n"
-			"ncolors: %-16d nimpcolors: %-16d\n", bp->dibheader.size,
-			bp->dibheader.width, bp->dibheader.height, bp->dibheader.nplanes,
-			bp->dibheader.depth, bp->dibheader.compression,
-			bp->dibheader.pixelarraysize, bp->dibheader.hres, bp->dibheader.vres,
-			bp->dibheader.ncolors, bp->dibheader.nimpcolors);
-}
-
-void
-swapheaderendianness(BMPheader *h){
+changeheaderendianness(BMPheader *h){
 	uint32swap(&h->size);
 	uint16swap(&h->unused1);
 	uint16swap(&h->unused2);
@@ -329,7 +311,7 @@ swapheaderendianness(BMPheader *h){
 }
 
 void
-swapdibendianness(DIBheader *h){
+changedibendianness(DIBheader *h){
 	uint32swap(&h->size);
 	uint32swap(&h->width);
 	uint32swap(&h->height);
@@ -354,7 +336,7 @@ readbmpheader(Bitmap *bp, FILE *fp){
 	xfread(&h->offset, sizeof(h->offset), 1, fp);
 
 	if(isbigendian())
-		swapheaderendianness(&bp->bmpheader);
+		changeheaderendianness(&bp->bmpheader);
 }
 
 void
@@ -362,7 +344,7 @@ writebmpheader(Bitmap *bp, FILE *fp){
 	BMPheader h = bp->bmpheader;
 
 	if(isbigendian())
-		swapheaderendianness(&h);
+		changeheaderendianness(&h);
 
 	xfwrite(h.id, sizeof(h.id), 1, fp);
 	xfwrite(&(h.size), sizeof(h.size), 1, fp);
@@ -388,7 +370,7 @@ readdibheader(Bitmap *bp, FILE *fp){
 	xfread(&h->nimpcolors, sizeof(h->nimpcolors), 1, fp);
 
 	if(isbigendian())
-		swapdibendianness(&bp->dibheader);
+		changedibendianness(&bp->dibheader);
 }
 
 void
@@ -396,7 +378,7 @@ writedibheader(Bitmap *bp, FILE *fp){
 	DIBheader h = bp->dibheader;
 
 	if(isbigendian())
-		swapdibendianness(&h);
+		changedibendianness(&h);
 
 	xfwrite(&(h.size), sizeof(h.size), 1, fp);
 	xfwrite(&(h.width), sizeof(h.width), 1, fp);
@@ -423,13 +405,9 @@ bmpfromfile(const char *filename){
 	/* read pixel data */
 	int imagesize = bmpimagesize(bp);
 	bp->imgpixels = xmalloc(imagesize);
-	xfread(bp->imgpixels, sizeof(bp->imgpixels), imagesize, fp);
-
+	xfread(bp->imgpixels, sizeof(bp->imgpixels[0]), imagesize, fp);
 	xfclose(fp);
 
-	/* TODO: debug info, delete later! */
-	bmpheaderdebug(bp);
-	dibheaderdebug(bp);
 	return bp;
 }
 
@@ -462,7 +440,7 @@ bmptofile(Bitmap *bp, const char *filename){
 void
 truncategrayscale(Bitmap *bp){
 	int imgsize = bmpimagesize(bp);
-	
+
 	for(int i = 0; i < imgsize; i++)
 		if(bp->imgpixels[i] > 250)
 			bp->imgpixels[i] = 250;
@@ -506,11 +484,12 @@ generatepixel(const uint8_t *coeff, int degree, int value){
 	long ret = 0;
 
 	for(int i = 0; i <= degree; i++)
-		ret += coeff[i] * powl(value,i);
+		ret += coeff[i] * powl(value, i);
 
 	return ret % PRIME;
 }
 
+/* find closest pair of values that when multiplied, give x */
 void
 findclosestpair(int x, uint32_t *width, uint32_t *height){
 	int n = floor(sqrt(x));
@@ -535,10 +514,9 @@ newshadow(uint32_t width, uint32_t height, uint16_t seed, uint16_t shadownumber)
 
 Bitmap **
 formshadows(Bitmap *bp, uint16_t seed, int k, int n){
-	int i, j;
 	uint8_t *coeff;
 	uint32_t width, height;
-	int totalpixels  = bmpimagesize(bp);
+	int i, j, totalpixels  = bmpimagesize(bp);;
 	Bitmap **shadows = xmalloc(sizeof(*shadows) * n);
 
 	findclosestpair(totalpixels/k, &width, &height);
@@ -561,7 +539,7 @@ void
 findcoefficients(int **mat, uint16_t k){
 	int i, j, t, a, temp;
 
-	/* tate matrix to echelon form */
+	/* take matrix to echelon form */
 	for(j = 0; j < k-1; j++){
 		for(i = k-1; i > j; i--){
 			a = mat[i][j] * modinv[mat[i-1][j]];
@@ -572,10 +550,10 @@ findcoefficients(int **mat, uint16_t k){
 		}
 	}
 
-	/* tate matrix to reduced row echelon form */
+	/* take matrix to reduced row echelon form */
 	for(i = k-1; i > 0; i--){
 		mat[i][k] = (mat[i][k] * modinv[mat[i][i]]) % PRIME;
-		mat[i][i] = 1;
+		mat[i][i] = (mat[i][i] * modinv[mat[i][i]]) % PRIME;
 		for(t = i-1; t >= 0; t--){
 			temp = mat[t][k] - ((mat[i][k] * mat[t][i]) % PRIME);
 			mat[t][k] = mod(temp, PRIME);
@@ -676,12 +654,14 @@ retrieveshadow(Bitmap *bp, uint32_t width, uint32_t height, uint16_t k){
 
 int
 isvalidbmp(const char *filename, uint16_t k){
-	FILE *fp = xfopen(filename, "r");
-	char id[2];
+	uint16_t magicnumber;
+	FILE *fp  = xfopen(filename, "r");
 	int valid = 0;
 
-	xfread(id, 2, 1, fp);
-	if(id[0] == 'B' && id[1] == 'M')
+	xfread(&magicnumber, sizeof(magicnumber), 1, fp);
+	if(!isbigendian())
+		uint16swap(&magicnumber);
+	if(magicnumber == BMP_MAGIC_NUMBER)
 		valid = validate_k(fp, k);
 	xfclose(fp);
 
@@ -691,7 +671,6 @@ isvalidbmp(const char *filename, uint16_t k){
 int
 isvalidshadow(const char *filename, uint16_t k){
 	uint16_t shadownumber;
-	char buf[3] = {0};
 	FILE *fp = xfopen(filename, "r");
 
 	fseek(fp, 8, SEEK_SET);
@@ -702,7 +681,7 @@ isvalidshadow(const char *filename, uint16_t k){
 }
 
 void 
-getvalidatedfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(const char *, uint16_t)){
+getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(const char *, uint16_t)){
 	struct dirent *d;
 	DIR *dp = xopendir(dir);
 	char filepath[255] = {0};
@@ -726,12 +705,12 @@ getvalidatedfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (
 
 void
 getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n){
-	getvalidatedfilenames(filenames, dir, k, n, isvalidbmp);
+	getvalidfilenames(filenames, dir, k, n, isvalidbmp);
 }
 
 void
 getshadowfilenames(char **filenames, char *dir, uint16_t k){
-	getvalidatedfilenames(filenames, dir, k, k, isvalidshadow);
+	getvalidfilenames(filenames, dir, k, k, isvalidshadow);
 }
 
 void
@@ -745,10 +724,12 @@ distributeimage(uint16_t k, uint16_t n, uint16_t seed, char *imgpath, char *dir)
 	truncategrayscale(bp);
 	/* permutepixels(bp, seed); */
 	shadows = formshadows(bp, seed, k, n);
+	freebitmap(bp);
 
 	for(i = 0; i < n; i++){
 		bp = bmpfromfile(filepaths[i]);
 		hideshadow(bp, shadows[i]);
+		freebitmap(bp);
 	}
 
 	for(i = 0; i < n; i++){
@@ -801,8 +782,9 @@ main(int argc, char *argv[]){
 	char *filename, *dir;
 	int distribute, mustcountfiles;
 	int argnum;
-	uint16_t width, height, seed;
-	uint16_t k, n;
+	uint16_t seed, k, n;;
+	uint16_t width = 0;
+	uint16_t height = 0;
 
 	argv0 = argv[0]; /* save program name for usage() */
 
@@ -846,42 +828,40 @@ main(int argc, char *argv[]){
 		argnum++;
 	}
 
-	if(width == 0)
-		die("width must be a positive integer");
-	if(height == 0)
-		die("height must be a positive integer");
+	/* if(width == 0) */
+	/* 	die("width must be a positive integer"); */
+	/* if(height == 0) */
+	/* 	die("height must be a positive integer"); */
 
 	if(argc == argnum){
 		dir = ".";
 		n = countfiles(dir);
-		goto run;
-	}
-
-	/* parse optional parameters */
-	if(strcmp(argv[argnum], "-n") == 0){
-		argnum++;
-		if(!distribute)
-			die("can only use -n when not using -d\n");
-		else if(argnum <= argc){
-			n = atoi(argv[argnum]);
-			argnum++;
-		}
 	} else {
-		mustcountfiles = 1;
+		/* parse optional parameters */
+		if(strcmp(argv[argnum], "-n") == 0){
+			argnum++;
+			if(!distribute)
+				die("can only use -n when not using -d\n");
+			else if(argnum <= argc){
+				n = atoi(argv[argnum]);
+				argnum++;
+			}
+		} else {
+			mustcountfiles = 1;
+		}
+
+		if(strcmp(argv[argnum], "-dir") == 0){
+			argnum++;
+			if(argnum <= argc)
+				dir = argv[argnum];
+			else
+				usage();
+		}
+
+		if(mustcountfiles)
+			n = countfiles(dir);
 	}
 
-	if(strcmp(argv[argnum], "-dir") == 0){
-		argnum++;
-		if(argnum <= argc)
-			dir = argv[argnum];
-		else
-			usage();
-	}
-
-	if(mustcountfiles)
-		n = countfiles(dir);
-
-run:
 	if(k > n || k < 2 || n < 2)
 		die("k and n must be: 2 <= k <= n\n");
 
