@@ -790,8 +790,7 @@ main(int argc, char *argv[]){
 	int dirflag = 0;
 	int secretflag = 0;
 	uint16_t seed, k, n;;
-	int width;
-	int height;
+	int width, height;
 	int i;
 
 	argv0 = argv[0]; /* save program name for usage() */
@@ -866,11 +865,12 @@ main(int argc, char *argv[]){
 		dir = ".";
 	if(!sflag)
 		seed = DEFAULT_SEED;
+
 	if(k > n || k < 2 || n < 2)
 		die("k and n must be: 2 <= k <= n\n");
-
 	if(dflag && rflag)
 		die("can't use -d and -r flags simultaneously\n");
+
 	if(dflag)
 		distributeimage(k, n, seed, filename, dir);
 	else if(rflag)
