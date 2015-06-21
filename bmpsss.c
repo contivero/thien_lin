@@ -13,7 +13,7 @@
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
 #define PRIME                  251
-#define MIN_ARGC               6
+#define DEFAULT_SEED           691
 #define BMP_MAGIC_NUMBER       0x424D      
 #define RIGHTMOST_BIT_ON(x)    (x) |= 0x01
 #define RIGHTMOST_BIT_OFF(x)   (x) &= 0xFE
@@ -780,94 +780,100 @@ countfiles(const char *dirname){
 int
 main(int argc, char *argv[]){
 	char *filename, *dir;
-	int distribute, mustcountfiles;
-	int argnum;
+	int dflag = 0;
+	int rflag = 0;
+	int kflag = 0;
+	int wflag = 0;
+	int hflag = 0;
+	int sflag = 0;
+	int nflag = 0;
+	int dirflag = 0;
+	int secretflag = 0;
 	uint16_t seed, k, n;;
-	uint16_t width = 0;
-	uint16_t height = 0;
+	int width;
+	int height;
+	int i;
 
 	argv0 = argv[0]; /* save program name for usage() */
 
-	if(argc < MIN_ARGC)
-		usage();
-
-	if(strcmp(argv[1], "-d") == 0)
-		distribute = 1;
-	else if(strcmp(argv[1], "-r") == 0) 
-		distribute = 0;
-	else
-		usage();
-
-	if(strcmp(argv[2], "-secret") == 0)
-		filename = argv[3];
-	else
-		usage();
-
-	if(strcmp(argv[4], "-k") == 0)
-		k = atoi(argv[5]);
-
-	argnum = 6;
-	if(!distribute){
-		if(argc < argnum + 4)
-			die("specify width and height with -w -h\n");
-		if(strcmp(argv[argnum], "-w") == 0){
-			argnum++;
-			width = atoi(argv[argnum]);
-			argnum++;
-		}
-		if(strcmp(argv[argnum], "-h") == 0){
-			argnum++;
-			height = atoi(argv[argnum]);
-			argnum++;
-		}
-	} else {
-		if(argc <= argnum + 2 || strcmp(argv[argnum], "-s") != 0)
-			die("specify seed with -s\n");
-		argnum++;
-		seed = atoi(argv[argnum]);
-		argnum++;
-	}
-
-	/* if(width == 0) */
-	/* 	die("width must be a positive integer"); */
-	/* if(height == 0) */
-	/* 	die("height must be a positive integer"); */
-
-	if(argc == argnum){
-		dir = ".";
-		n = countfiles(dir);
-	} else {
-		/* parse optional parameters */
-		if(strcmp(argv[argnum], "-n") == 0){
-			argnum++;
-			if(!distribute)
-				die("can only use -n when not using -d\n");
-			else if(argnum <= argc){
-				n = atoi(argv[argnum]);
-				argnum++;
+	for(i = 1; i < argc; i++){
+		if(strcmp(argv[i], "-d") == 0){
+			dflag = 1;
+		} else if(strcmp(argv[i], "-r") == 0) {
+			rflag = 1;
+		} else if(strcmp(argv[i], "-secret") == 0){
+			secretflag = 1;
+			if(i + 1 <= argc){
+				filename = argv[++i];
+			} else {
+				usage();
+			}
+		} else if(strcmp(argv[i], "-k") == 0){
+			kflag = 1;
+			if(i + 1 <= argc){
+				k = atoi(argv[++i]);
+			} else {
+				usage();
+			}
+		} else if(strcmp(argv[i], "-w") == 0){
+			wflag = 1;
+			if(i + 1 <= argc){
+				width = atoi(argv[++i]);
+			} else {
+				usage();
+			}
+		} else if(strcmp(argv[i], "-h") == 0){
+			hflag = 1;
+			if(i + 1 <= argc){
+				height = atoi(argv[++i]);
+			} else {
+				usage();
+			}
+		} else if(strcmp(argv[i], "-s") == 0) {
+			sflag = 1;
+			if(i + 1 <= argc){
+				seed = atoi(argv[++i]);
+			} else {
+				usage();
+			}
+		} else if(strcmp(argv[i], "-n") == 0){
+			nflag = 1;
+			if(i + 1 <= argc){
+				n = atoi(argv[++i]);
+			} else {
+				usage();
+			}
+		} else if(strcmp(argv[i], "-dir") == 0){
+			dirflag = 1;
+			if(i + 1 <= argc){
+				dir = argv[++i];
+			} else{
+				usage();
 			}
 		} else {
-			mustcountfiles = 1;
+			die("invalid %s parameter \n", argv[i]);
 		}
-
-		if(strcmp(argv[argnum], "-dir") == 0){
-			argnum++;
-			if(argnum <= argc)
-				dir = argv[argnum];
-			else
-				usage();
-		}
-
-		if(mustcountfiles)
-			n = countfiles(dir);
 	}
 
+	if(!(dflag || rflag) || !secretflag || !kflag)
+		usage();
+	if((rflag && !(wflag && hflag)) || !width || !height)
+		die("specify a positive width and height with -w -h for the revealed image\n");
+
+	if(!nflag)
+		n = countfiles(dir);
+	if(!dirflag)
+		dir = ".";
+	if(!sflag)
+		seed = DEFAULT_SEED;
 	if(k > n || k < 2 || n < 2)
 		die("k and n must be: 2 <= k <= n\n");
 
-	if(distribute)
+	if(dflag && rflag)
+		die("can't use -d and -r flags simultaneously\n");
+	if(dflag)
 		distributeimage(k, n, seed, filename, dir);
-	else
+	else if(rflag)
 		recoverimage(k, width, height, filename, dir);
 
 	return EXIT_SUCCESS;
