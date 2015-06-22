@@ -18,6 +18,7 @@ bmpsss (-d|-r) -secret <image> -k <number> -w <width> -h <height> [-n <number>] 
                     with the revealed  image.
 -w <width>          width of the image to recover
 -h <height>         height of the image to recover
+-s <seed>           seed for the permutation. If non specified, uses 691.
 -n <number>         amount of files in which to distribute the image. If not 
                     specified, uses the total amount of files in the directory 
 -dir <directory>    directory in which to search for the images. If not 
