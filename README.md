@@ -9,7 +9,7 @@ To build simply use `make`, the different flags can be found in config.mk
 usage:
 
 ```
-bmpsss (-d|-r) -secret <image> -k <number> -w <width> -h <height> [-n <number>] [-dir <directory>]
+bmpsss (-d|-r) -secret <image> -k <number> -w <width> -h <height> [-s <seed>] [-n <number>] [-dir <directory>]
 
 -d                  distribute image by hiding it on others
 -r                  recover image hidden in others
