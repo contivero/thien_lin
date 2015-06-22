@@ -813,49 +813,49 @@ main(int argc, char *argv[]){
 			rflag = 1;
 		} else if(strcmp(argv[i], "-secret") == 0){
 			secretflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				filename = argv[++i];
 			} else {
 				usage();
 			}
 		} else if(strcmp(argv[i], "-k") == 0){
 			kflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				k = atoi(argv[++i]);
 			} else {
 				usage();
 			}
 		} else if(strcmp(argv[i], "-w") == 0){
 			wflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				width = atoi(argv[++i]);
 			} else {
 				usage();
 			}
 		} else if(strcmp(argv[i], "-h") == 0){
 			hflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				height = atoi(argv[++i]);
 			} else {
 				usage();
 			}
 		} else if(strcmp(argv[i], "-s") == 0) {
 			sflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				seed = atoi(argv[++i]);
 			} else {
 				usage();
 			}
 		} else if(strcmp(argv[i], "-n") == 0){
 			nflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				n = atoi(argv[++i]);
 			} else {
 				usage();
 			}
 		} else if(strcmp(argv[i], "-dir") == 0){
 			dirflag = 1;
-			if(i + 1 <= argc){
+			if(i + 1 < argc){
 				dir = argv[++i];
 			} else{
 				usage();
@@ -870,10 +870,10 @@ main(int argc, char *argv[]){
 	if((rflag && !(wflag && hflag)) || !width || !height)
 		die("specify a positive width and height with -w -h for the revealed image\n");
 
+	if(!dirflag)
+		dir = "./";
 	if(!nflag)
 		n = countfiles(dir);
-	if(!dirflag)
-		dir = ".";
 	if(!sflag)
 		seed = DEFAULT_SEED;
 

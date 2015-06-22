@@ -12,7 +12,7 @@ $(SRC_DIR)/obj/%.o: $(SRC_DIR)/%.c
 	mkdir -p $(SRC_DIR)/obj
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-bmpsss.out: $(OBJ)
+bmpsss: $(OBJ)
 	mkdir -p $(BIN_DIR)
 	$(CC) -o $(BIN_DIR)/$@ $^ $(LDFLAGS)
 
@@ -26,4 +26,4 @@ clean:
 	rm -f $(BIN_DIR)/*
 	rm -f -r $(SRC_DIR)/obj
 
-.PHONY: options clean
+.PHONY: options clean bmpsss
