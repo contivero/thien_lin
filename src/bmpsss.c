@@ -10,6 +10,7 @@
 #define DIB_HEADER_SIZE        40
 #define PALETTE_SIZE           1024
 #define PIXEL_ARRAY_OFFSET     BMP_HEADER_SIZE + DIB_HEADER_SIZE + PALETTE_SIZE
+#define UNUSED2_OFFSET         8
 #define WIDTH_OFFSET           18
 #define HEIGHT_OFFSET          22
 #define PRIME                  251
@@ -77,7 +78,8 @@ static void     writebmpheader(Bitmap *bp, FILE *fp);
 static void     readdibheader(Bitmap *bp, FILE *fp);
 static void     writedibheader(Bitmap *bp, FILE *fp);
 static Bitmap   *bmpfromfile(const char *filename);
-static int      validate_k(FILE *fp, int r);
+static int      isvalidbmpsize(FILE *fp, uint16_t k, uint32_t secretsize);
+static int      kdivisiblesize(FILE *fp, uint16_t k);
 static int      bmpimagesize(Bitmap *bp);
 static void     bmptofile(Bitmap *bp, const char *filename);
 static void     truncategrayscale(Bitmap *bp);
@@ -91,11 +93,12 @@ static void     findcoefficients(int **mat, uint16_t k);
 static void     revealsecret(Bitmap **shadows, uint16_t k, uint32_t width, uint32_t height, const char *filename);
 static void     hideshadow(Bitmap *bp, Bitmap *shadow);
 static Bitmap   *retrieveshadow(Bitmap *bp, uint32_t width, uint32_t height, uint16_t k);
-static int      isvalidbmp(const char *filename, uint16_t k);
-static int      isvalidshadow(const char *filename, uint16_t k);
-static void     getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(const char *, uint16_t));
-static void     getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n);
-static void     getshadowfilenames(char **filenames, char *dir, uint16_t k);
+static int      isbmp(FILE *fp);
+static int      isvalidshadow(FILE *fp, uint16_t k, uint32_t size);
+static int      isvalidbmp(FILE *fp, uint16_t k, uint32_t ignored);
+static void     getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(FILE *, uint16_t, uint32_t), uint32_t);
+static void     getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, uint32_t size);
+static void     getshadowfilenames(char **filenames, char *dir, uint16_t k, uint32_t size);
 static void     distributeimage(uint16_t k, uint16_t n, uint16_t seed, char *imgpath, char *dir);
 static void     recoverimage(uint16_t k, uint32_t width, uint32_t height, char *filename, char *dir);
 static int      countfiles(const char *dirname);
@@ -234,7 +237,7 @@ randint(long int max){
 uint32_t
 get32bitsfromheader(FILE *fp, int offset){
 	uint32_t value;
-	uint32_t pos = ftell(fp);
+	long pos = ftell(fp);
 
 	fseek(fp, offset, SEEK_SET);
 	xfread(&value, sizeof(value), 1, fp);
@@ -411,14 +414,20 @@ bmpfromfile(const char *filename){
 	return bp;
 }
 
-int
-validate_k(FILE *fp, int r){
-	int width  = bmpfilewidth(fp);
-	int height = bmpfileheight(fp);
-	int pixels = width * height;
-	int aux    = pixels / r;
+int 
+isvalidbmpsize(FILE *fp, uint16_t k, uint32_t secretsize){
+	uint32_t shadowsize = (secretsize * 8)/k;
+	uint32_t imgsize    = bmpfilewidth(fp) * bmpfileheight(fp);
 
-	return pixels == aux * r;
+	return imgsize >= shadowsize;
+}
+
+int
+kdivisiblesize(FILE *fp, uint16_t k){
+	int pixels     = bmpfilewidth(fp) * bmpfileheight(fp);
+	int aux        = pixels / k;
+
+	return pixels == aux * k;
 }
 
 int
@@ -589,7 +598,7 @@ revealsecret(Bitmap **shadows, uint16_t k, uint32_t width, uint32_t height, cons
 			bmp->imgpixels[j] = mat[j % k][k];
 		}
 	} 
-	/* unpermutepixels(bmp, sp->bmpheader.unused1); */
+	unpermutepixels(bmp, sp->bmpheader.unused1);
 	bmptofile(bmp, filename);
 
 	for(i = 0; i < k; i++)
@@ -630,10 +639,6 @@ retrieveshadow(Bitmap *bp, uint32_t width, uint32_t height, uint16_t k){
 	uint16_t key          = bp->bmpheader.unused1;
 	uint16_t shadownumber = bp->bmpheader.unused2;
 
-	if(bp->dibheader.width * bp->dibheader.height < (uint32_t)(((width * height)*8)/k))
-		die("image of %d pixels can't contain shadow of %d pixels\n",
-				bp->dibheader.width * bp->dibheader.height, ((width * height)*8)/k);
-
 	findclosestpair((width * height)/k, &width, &height);
 	Bitmap *shadow = newshadow(width, height, key, shadownumber);
 	int shadowpixels = shadow->dibheader.pixelarraysize;
@@ -653,36 +658,40 @@ retrieveshadow(Bitmap *bp, uint32_t width, uint32_t height, uint16_t k){
 }
 
 int
-isvalidbmp(const char *filename, uint16_t k){
+isbmp(FILE *fp){
 	uint16_t magicnumber;
-	FILE *fp  = xfopen(filename, "r");
-	int valid = 0;
+	long pos = ftell(fp);
 
+	fseek(fp, 0, SEEK_SET);
 	xfread(&magicnumber, sizeof(magicnumber), 1, fp);
 	if(!isbigendian())
 		uint16swap(&magicnumber);
-	if(magicnumber == BMP_MAGIC_NUMBER)
-		valid = validate_k(fp, k);
-	xfclose(fp);
+	fseek(fp, pos, SEEK_SET);
 
-	return valid;
+	return magicnumber == BMP_MAGIC_NUMBER;
 }
 
 int
-isvalidshadow(const char *filename, uint16_t k){
+isvalidshadow(FILE *fp, uint16_t k, uint32_t secretsize){
 	uint16_t shadownumber;
-	FILE *fp = xfopen(filename, "r");
+	long pos = ftell(fp);
 
-	fseek(fp, 8, SEEK_SET);
+	fseek(fp, UNUSED2_OFFSET, SEEK_SET);
 	xfread(&shadownumber, sizeof(shadownumber), 1, fp);
-	xfclose(fp);
+	fseek(fp, pos, SEEK_SET);
 
-	return shadownumber && isvalidbmp(filename, k);
+	return shadownumber && isbmp(fp) && isvalidbmpsize(fp, k, secretsize);
+}
+
+int
+isvalidbmp(FILE *fp, uint16_t k, uint32_t ignored){
+	return isbmp(fp) && kdivisiblesize(fp, k);
 }
 
 void 
-getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(const char *, uint16_t)){
+getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(FILE *, uint16_t, uint32_t), uint32_t size){
 	struct dirent *d;
+	FILE *fp;
 	DIR *dp = xopendir(dir);
 	char filepath[255] = {0};
 	int i = 0;
@@ -690,27 +699,29 @@ getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isv
 	while((d = readdir(dp)) && i < n){
 		if(d->d_type == DT_REG){ 
 			snprintf(filepath, 255, "%s/%s", dir, d->d_name);
-			if(isvalid(filepath, k)){
+			fp = xfopen(filepath, "r");
+			if(isvalid(fp, k, size)){
 				filenames[i] = xmalloc(strlen(filepath) + 1);
 				strcpy(filenames[i], filepath);
 				i++;
 			}
+			xfclose(fp);
 		}
 	}
 	closedir(dp);
 
 	if(i < n)
-		die("not enough valid bmps for a (%d,%d) threshold in dir %s", k, n, dir);
+		die("not enough valid bmps for a (%d,%d) threshold scheme in dir %s\n", k, n, dir);
 }
 
 void
-getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n){
-	getvalidfilenames(filenames, dir, k, n, isvalidbmp);
+getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, uint32_t size){
+	getvalidfilenames(filenames, dir, k, n, isvalidbmp, size);
 }
 
 void
-getshadowfilenames(char **filenames, char *dir, uint16_t k){
-	getvalidfilenames(filenames, dir, k, k, isvalidshadow);
+getshadowfilenames(char **filenames, char *dir, uint16_t k, uint32_t size){
+	getvalidfilenames(filenames, dir, k, k, isvalidshadow, size);
 }
 
 void
@@ -719,10 +730,10 @@ distributeimage(uint16_t k, uint16_t n, uint16_t seed, char *imgpath, char *dir)
 	Bitmap *bp, **shadows;
 	int i;
 
-	getbmpfilenames(filepaths, dir, k, n);
 	bp = bmpfromfile(imgpath);
+	getbmpfilenames(filepaths, dir, k, n, bmpimagesize(bp));
 	truncategrayscale(bp);
-	/* permutepixels(bp, seed); */
+	permutepixels(bp, seed);
 	shadows = formshadows(bp, seed, k, n);
 	freebitmap(bp);
 
@@ -747,7 +758,7 @@ recoverimage(uint16_t k, uint32_t width, uint32_t height, char *filename, char *
 	Bitmap *bp;
 	int i;
 
-	getshadowfilenames(filepaths, dir, k);
+	getshadowfilenames(filepaths, dir, k, width * height);
 	for(i = 0; i < k; i++){
 		bp = bmpfromfile(filepaths[i]);
 		shadows[i] = retrieveshadow(bp, width, height, k);
