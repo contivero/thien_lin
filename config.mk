@@ -14,6 +14,6 @@ CFLAGS  = -D_GNU_SOURCE -std=c99 -pedantic -O3
 	-Wbad-function-cast -Wstrict-overflow=5 -Wstrict-prototypes -Winline \
 	-Wundef -Wnested-externs -Wcast-qual -Wshadow -Wunreachable-code \
 	-Wlogical-op -Wfloat-equal -Wstrict-aliasing=2 -Wredundant-decls \
-	-Wold-style-definition -Werror -Wuninitialized -Wmaybe-uninitialized \
-	-Wmissing-prototypes -O0 \
+	-Wold-style-definition -Wuninitialized -Wmaybe-uninitialized -Wmissing-prototypes -O0 \
+	-Werror\
 

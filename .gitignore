@@ -1,5 +1,6 @@
-*.bmp
 bmpsss
+test_files/outputs
+test_files/shades-tmp
 
 # Mac OS X hidden files
 .DS_Store
