@@ -16,44 +16,43 @@
 #define DEFAULT_SEED           691
 #define RIGHTMOST_BIT_ON(x)    ((x) |= 0x01)
 #define RIGHTMOST_BIT_OFF(x)   ((x) &= 0xFE)
+#define DIR_MAX                (PATH_MAX - NAME_MAX)
 
 typedef struct {
-    uint8_t  id[2];    /* magic number to identify the BMP format */
-    uint32_t size;     /* size of the BMP file in bytes */
-    uint16_t unused1;  /* key (seed) */
-    uint16_t unused2;  /* shadow number */
-    uint32_t offset;   /* starting address of the pixel array (bitmap data) */
+    uint8_t  id[2];   /* magic number to identify the BMP format */
+    uint32_t size;    /* size of the BMP file in bytes */
+    uint16_t unused1; /* key (seed) */
+    uint16_t unused2; /* shadow number */
+    uint32_t offset;  /* starting address of the pixel array (bitmap data) */
 } BMPheader;
 
 /* 40 bytes BITMAPINFOHEADER */
 typedef struct {
-    uint32_t size;            /* the size of this header (40 bytes) */
-    uint32_t width;           /* the bitmap width in pixels */
-    int32_t  height;          /* the bitmap height in pixels; can be negative */
-    uint16_t nplanes;         /* number of color planes used; Must set to 1 */
-    uint16_t depth;           /* bpp number. Usually: 1, 4, 8, 16, 24 or 32 */
-    uint32_t compression;     /* compression method used */
-    uint32_t pixelarraysize;  /* size of the raw bitmap (pixel) data */
-    uint32_t hres;            /* horizontal resolution (pixel per meter) */
-    uint32_t vres;            /* vertical resolution (pixel per meter) */
-    uint32_t ncolors;         /* colors in the palette. 0 means 2^n */
-    uint32_t nimpcolors;      /* important colors used, usually ignored */
+    uint32_t size;           /* the size of this header (40 bytes) */
+    uint32_t width;          /* the bitmap width in pixels */
+    int32_t  height;         /* the bitmap height in pixels; can be negative */
+    uint16_t nplanes;        /* number of color planes used; Must set to 1 */
+    uint16_t depth;          /* bpp number. Usually: 1, 4, 8, 16, 24 or 32 */
+    uint32_t compression;    /* compression method used */
+    uint32_t pixelarraysize; /* size of the raw bitmap (pixel) data */
+    uint32_t hres;           /* horizontal resolution (pixel per meter) */
+    uint32_t vres;           /* vertical resolution (pixel per meter) */
+    uint32_t ncolors;        /* colors in the palette. 0 means 2^n */
+    uint32_t nimpcolors;     /* important colors used, usually ignored */
 } DIBheader;
 
 typedef struct {
-    BMPheader bmpheader;             /* 14 bytes bmp starting header */
-    DIBheader dibheader;             /* 40 bytes dib header */
+    BMPheader bmpheader;             /* 14 bytes BMP starting header */
+    DIBheader dibheader;             /* 40 bytes DIB header */
     uint8_t   palette[PALETTE_SIZE]; /* color palette; mandatory for depth <= 8 */
     uint8_t   *imgpixels;            /* array of bytes representing each pixel */
 } Bitmap;
 
 /* prototypes */
 static long     randint(long max);
-
+static void     swap(uint8_t *s, uint8_t *t);
 static int      countfiles(const char *dirname);
 static void     usage(void);
-static void     swap(uint8_t *s, uint8_t *t);
-
 static uint32_t get32bitsfromheader(FILE *fp, int offset);
 static uint32_t bmpfilewidth(FILE *fp);
 static uint32_t bmpfileheight(FILE *fp);
@@ -61,6 +60,7 @@ static uint32_t bmpimagesize(Bitmap *bp);
 static void     initpalette(uint8_t palette[]);
 static Bitmap   *newbitmap(uint32_t width, int32_t height, uint16_t seed);
 static void     freebitmap(Bitmap *bp);
+static Bitmap   *newbitmaphelper(uint32_t width, int32_t height, uint16_t seed, uint16_t shadnum, uint32_t pixelarraysize);
 static void     changeheaderendianness(BMPheader *h);
 static void     changedibendianness(DIBheader *h);
 static void     readbmpheader(Bitmap *bp, FILE *fp);
@@ -68,7 +68,7 @@ static void     writebmpheader(Bitmap *bp, FILE *fp);
 static void     readdibheader(Bitmap *bp, FILE *fp);
 static void     writedibheader(Bitmap *bp, FILE *fp);
 static Bitmap   *bmpfromfile(const char *filename);
-static int      isvalidbmpsize(FILE *fp, uint16_t k, uint32_t secretsize);
+static bool     isvalidbmpsize(FILE *fp, uint16_t k, uint32_t secretsize);
 static int      kdivisiblesize(FILE *fp, uint16_t k);
 static void     bmptofile(Bitmap *bp, const char *filename);
 static void     findclosestpair(int value, uint32_t *v1, int32_t *v2);
@@ -78,19 +78,19 @@ static void     findcoefficients(int **mat, uint16_t k);
 static void     revealsecret(Bitmap **shadows, uint16_t k, uint32_t width, int32_t height, const char *filename);
 static void     hideshadow(Bitmap *bp, Bitmap *shadow);
 static Bitmap   *retrieveshadow(Bitmap *bp, uint32_t width, int32_t height, uint16_t k);
-static int      isbmp(FILE *fp);
-static int      isvalidshadow(FILE *fp, uint16_t k, uint32_t size);
-static int      isvalidbmp(FILE *fp, uint16_t k, uint32_t ignored);
-static void     getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(FILE *, uint16_t, uint32_t), uint32_t);
+static bool     isbmp(FILE *fp);
+static bool     isvalidshadow(FILE *fp, uint16_t k, uint32_t size);
+static bool     isvalidbmp(FILE *fp, uint16_t k, uint32_t ignored);
+static void     getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, bool (*isvalid)(FILE *, uint16_t, uint32_t), uint32_t);
 static void     getbmpfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, uint32_t size);
 static void     getshadowfilenames(char **filenames, char *dir, uint16_t k, uint32_t size);
 static void     distributeimage(uint16_t k, uint16_t n, uint16_t seed, char *imgpath, char *dir);
 static void     recoverimage(uint16_t k, uint32_t width, int32_t height, char *filename, char *dir);
+static uint32_t calculatepixelarraysize(uint32_t width, int32_t height);
 static void     truncategrayscale(Bitmap *bp);
 static void     permutepixels(Bitmap *bp, uint16_t seed);
 static void     unpermutepixels(Bitmap *bp, uint16_t seed);
 static uint8_t  generatepixel(const uint8_t *coeff, int degree, int value);
-static uint32_t pixelarraysize(uint32_t width, int32_t height);
 
 /* globals */
 static char *argv0;                /* program name for usage() */
@@ -122,7 +122,7 @@ countfiles(const char *dirname){
     while((d = readdir(dp)))
         if(d->d_type == DT_REG) /* If the entry is a regular file */
             filecount++;
-    closedir(dp);
+    xclosedir(dp);
 
     return filecount;
 }
@@ -152,7 +152,7 @@ swap(uint8_t *s, uint8_t *t){
 /* Calculates needed pixelarraysize, accounting for padding.
  * See: https://en.wikipedia.org/wiki/BMP_file_format#Pixel_storage */
 inline uint32_t
-pixelarraysize(uint32_t width, int32_t height){
+calculatepixelarraysize(uint32_t width, int32_t height){
     return ((BITS_PER_PIXEL * width + 31)/32) * 4 * height;
 }
 
@@ -161,9 +161,9 @@ get32bitsfromheader(FILE *fp, int offset){
     uint32_t value;
     long pos = ftell(fp);
 
-    fseek(fp, offset, SEEK_SET);
+    xfseek(fp, offset, SEEK_SET);
     xfread(&value, sizeof(value), 1, fp);
-    fseek(fp, pos, SEEK_SET);
+    xfseek(fp, pos, SEEK_SET);
 
     return value;
 }
@@ -181,7 +181,7 @@ bmpfileheight(FILE *fp){
 /* initialize palette with default 8-bit greyscale values */
 void
 initpalette(uint8_t palette[]){
-    int i, j;
+    uint32_t i, j;
 
     for(i = 0; i < 256; i++){
         j = i * 4;
@@ -195,17 +195,25 @@ initpalette(uint8_t palette[]){
 /* If no seed is needed, just pass 0 */
 Bitmap *
 newbitmap(uint32_t width, int32_t height, uint16_t seed){
-    uint32_t rowsize = ((BITS_PER_PIXEL * width + 31)/32) * 4;
-    uint32_t pixelarraysize = rowsize * height;
-    Bitmap *bmp        = xmalloc(sizeof(*bmp));
-    bmp->imgpixels     = xmalloc(pixelarraysize);
+    uint32_t pixelarraysize = calculatepixelarraysize(width, height);
+    Bitmap *bmp = newbitmaphelper(width, height, seed, 0, pixelarraysize);
+
+    return bmp;
+}
+
+/* Helper function to build a BMP, used by newbitmap() and newshadow() */
+Bitmap*
+newbitmaphelper(uint32_t width, int32_t height, uint16_t seed, uint16_t shadnum, uint32_t pixelarraysize){
+    Bitmap *bmp = xmalloc(sizeof(*bmp));
+
+    bmp->imgpixels = xmalloc(pixelarraysize);
     initpalette(bmp->palette);
 
     bmp->bmpheader.id[0]   = 'B';
     bmp->bmpheader.id[1]   = 'M';
     bmp->bmpheader.size    = PIXEL_ARRAY_OFFSET + pixelarraysize;
     bmp->bmpheader.unused1 = seed;
-    bmp->bmpheader.unused2 = 0;
+    bmp->bmpheader.unused2 = shadnum;
     bmp->bmpheader.offset  = PIXEL_ARRAY_OFFSET;
 
     bmp->dibheader.size           = DIB_HEADER_SIZE;
@@ -221,6 +229,7 @@ newbitmap(uint32_t width, int32_t height, uint16_t seed){
     bmp->dibheader.nimpcolors     = 0;
 
     return bmp;
+
 }
 
 void
@@ -338,7 +347,7 @@ bmpfromfile(const char *filename){
     return bp;
 }
 
-int
+bool
 isvalidbmpsize(FILE *fp, uint16_t k, uint32_t secretsize){
     uint32_t shadowsize = (secretsize * 8)/k;
     uint32_t imgsize    = bmpfilewidth(fp) * bmpfileheight(fp);
@@ -391,29 +400,8 @@ findclosestpair(int x, uint32_t *width, int32_t *height){
 
 Bitmap *
 newshadow(uint32_t width, int32_t height, uint16_t seed, uint16_t shadownumber){
-    uint32_t pixelarraysize = width * height;
-    Bitmap *bmp        = xmalloc(sizeof(*bmp));
-    bmp->imgpixels     = xmalloc(pixelarraysize);
-    initpalette(bmp->palette);
-
-    bmp->bmpheader.id[0]   = 'B';
-    bmp->bmpheader.id[1]   = 'M';
-    bmp->bmpheader.size    = PIXEL_ARRAY_OFFSET + pixelarraysize;
-    bmp->bmpheader.unused1 = seed;
+    Bitmap *bmp = newbitmaphelper(width, height, seed, shadownumber, width * height);
     bmp->bmpheader.unused2 = shadownumber;
-    bmp->bmpheader.offset  = PIXEL_ARRAY_OFFSET;
-
-    bmp->dibheader.size           = DIB_HEADER_SIZE;
-    bmp->dibheader.width          = width;
-    bmp->dibheader.height         = height;
-    bmp->dibheader.nplanes        = 1;
-    bmp->dibheader.depth          = BITS_PER_PIXEL;
-    bmp->dibheader.compression    = 0;
-    bmp->dibheader.pixelarraysize = pixelarraysize;
-    bmp->dibheader.hres           = 0;
-    bmp->dibheader.vres           = 0;
-    bmp->dibheader.ncolors        = 0;
-    bmp->dibheader.nimpcolors     = 0;
 
     return bmp;
 }
@@ -516,7 +504,7 @@ hideshadow(Bitmap *bp, Bitmap *shadow){
 
     bp->bmpheader.unused1 = shadow->bmpheader.unused1;
     bp->bmpheader.unused2 = shadow->bmpheader.unused2;
-    snprintf(shadowfilename, 20, "shadow%d.bmp", shadow->bmpheader.unused2);
+    xsnprintf(shadowfilename, 20, "shadow%d.bmp", shadow->bmpheader.unused2);
 
     for(i = 0; i < pixels; i++){
         byte = shadow->imgpixels[i];
@@ -539,14 +527,14 @@ retrieveshadow(Bitmap *bp, uint32_t width, int32_t height, uint16_t k){
     uint16_t key          = bp->bmpheader.unused1;
     uint16_t shadownumber = bp->bmpheader.unused2;
 
-    findclosestpair(pixelarraysize(width, height)/k, &width, &height);
+    findclosestpair(calculatepixelarraysize(width, height)/k, &width, &height);
     Bitmap *shadow = newshadow(width, height, key, shadownumber);
-    int shadowpixels = shadow->dibheader.pixelarraysize;
+    uint32_t shadowpixels = shadow->dibheader.pixelarraysize;
 
-    for(int i = 0; i < shadowpixels; i++){
+    for(uint32_t i = 0; i < shadowpixels; i++){
         byte = 0;
         mask = 0x80; /* 1000 0000 */
-        for(int j = i*8; j < 8*(i+1); j++){
+        for(uint32_t j = i*8; j < 8*(i+1); j++){
             if(bp->imgpixels[j] & 0x01)
                 byte |= mask;
             mask >>= 1;
@@ -557,60 +545,59 @@ retrieveshadow(Bitmap *bp, uint32_t width, int32_t height, uint16_t k){
     return shadow;
 }
 
-int
+bool
 isbmp(FILE *fp){
-    uint16_t magicnumber;
+    char magicnumber[2];
     long pos = ftell(fp);
 
-    fseek(fp, 0, SEEK_SET);
-    xfread(&magicnumber, sizeof(magicnumber), 1, fp);
-    if(!isbigendian())
-        uint16swap(&magicnumber);
-    fseek(fp, pos, SEEK_SET);
+    xfseek(fp, 0, SEEK_SET);
+    xfread(magicnumber, sizeof(magicnumber), 1, fp);
+    xfseek(fp, pos, SEEK_SET);
 
-    return magicnumber == BMP_MAGIC_NUMBER;
+    return magicnumber[0] == 'B' && magicnumber[1] == 'M';
 }
 
-int
+bool
 isvalidshadow(FILE *fp, uint16_t k, uint32_t secretsize){
     uint16_t shadownumber;
     long pos = ftell(fp);
 
-    fseek(fp, UNUSED2_OFFSET, SEEK_SET);
+    xfseek(fp, UNUSED2_OFFSET, SEEK_SET);
     xfread(&shadownumber, sizeof(shadownumber), 1, fp);
-    fseek(fp, pos, SEEK_SET);
+    xfseek(fp, pos, SEEK_SET);
 
     return shadownumber && isbmp(fp) && isvalidbmpsize(fp, k, secretsize);
 }
 
 /* the last parameter is ignored, and is only present so that the function
  * prototype can be used with getvalidfilenames() */
-int
+bool
 isvalidbmp(FILE *fp, uint16_t k, uint32_t ignoredparameter){
     return isbmp(fp) && kdivisiblesize(fp, k);
 }
 
 void
-getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, int (*isvalid)(FILE *, uint16_t, uint32_t), uint32_t size){
+getvalidfilenames(char **filenames, char *dir, uint16_t k, uint16_t n, bool (*isvalid)(FILE *, uint16_t, uint32_t), uint32_t size){
     struct dirent *d;
     FILE *fp;
     DIR *dp = xopendir(dir);
-    char filepath[PATH_MAX + 1] = {0};
     int i = 0;
+    char filepath[PATH_MAX] = {0};
 
     while((d = readdir(dp)) && i < n){
         if(d->d_type == DT_REG){
-            snprintf(filepath, PATH_MAX + 1, "%s/%.*s", dir, NAME_MAX,  d->d_name);
+            int len = xsnprintf(filepath, PATH_MAX, "%.*s/%.*s", DIR_MAX, dir, NAME_MAX, d->d_name);
             fp = xfopen(filepath, "r");
             if(isvalid(fp, k, size)){
-                filenames[i] = xmalloc(strlen(filepath) + 1);
-                strcpy(filenames[i], filepath);
+                filenames[i] = xmalloc(len + 1);
+                strncpy(filenames[i], filepath, len);
+                filenames[i][len] = '\0'; /* NULL terminate string */
                 i++;
             }
             xfclose(fp);
         }
     }
-    closedir(dp);
+    xclosedir(dp);
 
     if(i < n)
         die("not enough valid bmps for a (%d,%d) threshold scheme in dir %s\n", k, n, dir);
@@ -723,7 +710,7 @@ unpermutepixels(Bitmap *bp, uint16_t seed){
  * section polynomial and generate a pixel for a shadow image */
 uint8_t
 generatepixel(const uint8_t *coeff, int degree, int value){
-    long ret = 0;
+    intmax_t ret = 0;
 
     for(int i = 0; i <= degree; i++)
         ret += coeff[i] * powl(value, i);
