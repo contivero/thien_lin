@@ -181,10 +181,8 @@ bmpfileheight(FILE *fp){
 /* initialize palette with default 8-bit greyscale values */
 void
 initpalette(uint8_t palette[]){
-    uint32_t i, j;
-
-    for(i = 0; i < 256; i++){
-        j = i * 4;
+    for(uint32_t i = 0; i < 256; i++){
+        uint32_t j = i * 4;
         palette[j++] = i;
         palette[j++] = i;
         palette[j++] = i;
@@ -409,7 +407,6 @@ newshadow(uint32_t width, int32_t height, uint16_t seed, uint16_t shadownumber){
 Bitmap **
 formshadows(Bitmap *bp, uint16_t seed, uint16_t k, uint16_t n){
     unsigned int i, j;
-    uint8_t *coeff;
     uint32_t width;
     int32_t height;
     uint32_t pixelarraysize = bmpimagesize(bp);
@@ -423,7 +420,7 @@ formshadows(Bitmap *bp, uint16_t seed, uint16_t k, uint16_t n){
 
     /* generate shadow image pixels */
     for(j = 0; j*k < pixelarraysize; j++){
-        coeff = &bp->imgpixels[j*k];
+        uint8_t *coeff = &bp->imgpixels[j*k];
         for(i = 0; i < n; i++)
             shadows[i]->imgpixels[j] = generatepixel(coeff, k-1, i+1);
     }
@@ -498,7 +495,6 @@ revealsecret(Bitmap **shadows, uint16_t k, uint32_t width, int32_t height, const
 void
 hideshadow(Bitmap *bp, Bitmap *shadow){
     unsigned int i, j;
-    uint8_t byte;
     char shadowfilename[20] = {0};
     uint32_t pixels = bmpimagesize(shadow);
 
@@ -507,7 +503,7 @@ hideshadow(Bitmap *bp, Bitmap *shadow){
     xsnprintf(shadowfilename, 20, "shadow%d.bmp", shadow->bmpheader.unused2);
 
     for(i = 0; i < pixels; i++){
-        byte = shadow->imgpixels[i];
+        uint8_t byte = shadow->imgpixels[i];
         for(j = i*8; j < 8*(i+1); j++){
             if(byte & 0x80) /* 1000 0000 */
                 RIGHTMOST_BIT_ON(bp->imgpixels[j]);
@@ -523,7 +519,6 @@ hideshadow(Bitmap *bp, Bitmap *shadow){
  * be bigger than necessary */
 Bitmap *
 retrieveshadow(Bitmap *bp, uint32_t width, int32_t height, uint16_t k){
-    uint8_t byte, mask;
     uint16_t key          = bp->bmpheader.unused1;
     uint16_t shadownumber = bp->bmpheader.unused2;
 
@@ -532,8 +527,8 @@ retrieveshadow(Bitmap *bp, uint32_t width, int32_t height, uint16_t k){
     uint32_t shadowpixels = shadow->dibheader.pixelarraysize;
 
     for(uint32_t i = 0; i < shadowpixels; i++){
-        byte = 0;
-        mask = 0x80; /* 1000 0000 */
+        uint8_t byte = 0;
+        uint8_t mask = 0x80; /* 1000 0000 */
         for(uint32_t j = i*8; j < 8*(i+1); j++){
             if(bp->imgpixels[j] & 0x01)
                 byte |= mask;
@@ -644,12 +639,11 @@ void
 recoverimage(uint16_t k, uint32_t width, int32_t height, char *filename, char *dir){
     char **filepaths = xmalloc(sizeof(*filepaths) * k);
     Bitmap **shadows = xmalloc(sizeof(*shadows) * k);
-    Bitmap *bp;
     unsigned int i;
 
     getshadowfilenames(filepaths, dir, k, width * height);
     for(i = 0; i < k; i++){
-        bp = bmpfromfile(filepaths[i]);
+        Bitmap *bp = bmpfromfile(filepaths[i]);
         shadows[i] = retrieveshadow(bp, width, height, k);
         freebitmap(bp);
     }
@@ -676,20 +670,18 @@ truncategrayscale(Bitmap *bp){
 
 void
 permutepixels(Bitmap *bp, uint16_t seed){
-    int i, j;
     uint32_t imgsize = bmpimagesize(bp);
     uint8_t *p  = bp->imgpixels;
 
     srand(seed);
-    for(i = imgsize - 1; i > 1; i--){
-        j = randint(i);
+    for(uint32_t i = imgsize - 1; i > 1; i--){
+        int j = randint(i);
         swap(&p[j], &p[i]);
     }
 }
 
 void
 unpermutepixels(Bitmap *bp, uint16_t seed){
-    int j;
     unsigned int i;
     uint32_t imgsize = bmpimagesize(bp);
     int *permseq = xmalloc(sizeof(*permseq) * imgsize);
@@ -700,7 +692,7 @@ unpermutepixels(Bitmap *bp, uint16_t seed){
         permseq[i] = randint(i);
 
     for(i = 1 ; i < imgsize - 1; i++){
-        j = permseq[i];
+        int j = permseq[i];
         swap(&p[j], &p[i]);
     }
     free(permseq);
