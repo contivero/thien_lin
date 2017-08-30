@@ -1,7 +1,13 @@
-#include "util.h"
+#include <dirent.h>
 #include <limits.h>
-#include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <tgmath.h>
+
+#include "util.h"
 
 #define BMP_MAGIC_NUMBER       0x424D
 #define BMP_HEADER_SIZE        14
@@ -705,7 +711,7 @@ generatepixel(const uint8_t *coeff, int degree, int value){
     intmax_t ret = 0;
 
     for(int i = 0; i <= degree; i++)
-        ret += coeff[i] * powl(value, i);
+        ret += coeff[i] * pow(value, i);
 
     return ret % PRIME;
 }

@@ -1,3 +1,10 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdarg.h>
+#include <dirent.h>
+
 #include "util.h"
 
 void

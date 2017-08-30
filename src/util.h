@@ -1,10 +1,3 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdarg.h>
-#include <dirent.h>
-
 void die(const char *errstr, ...);
 
 void xfclose(FILE *fp);
