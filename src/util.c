@@ -1,14 +1,14 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdarg.h>
 #include <dirent.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "util.h"
 
 void
-die(const char *errstr, ...){
+die(const char *errstr, ...) {
     va_list ap;
 
     va_start(ap, errstr);
@@ -18,62 +18,62 @@ die(const char *errstr, ...){
 }
 
 FILE *
-xfopen (const char *filename, const char *mode){
+xfopen(const char *filename, const char *mode) {
     FILE *fp = fopen(filename, mode);
 
-    if(!fp)
+    if (!fp)
         die("fopen: couldn't open %s\n", filename);
 
     return fp;
 }
 
 void
-xfclose (FILE *fp){
-    if(fclose(fp) == EOF)
+xfclose(FILE *fp) {
+    if (fclose(fp) == EOF)
         die("fclose: error\n");
 }
 
 void
-xfread(void *ptr, size_t size, size_t nmemb, FILE *stream){
-    if(fread(ptr, size, nmemb, stream) < 1)
+xfread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (fread(ptr, size, nmemb, stream) < 1)
         die("fread: error\n");
 }
 
 void
-xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream){
-    if(fwrite(ptr, size, nmemb, stream) != nmemb)
+xfwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (fwrite(ptr, size, nmemb, stream) != nmemb)
         die("fwrite: error in writing or end of file.\n");
 }
 
 void
-xfseek(FILE *fp,  long offset,  int whence) {
-    if(fseek(fp, offset, whence))
+xfseek(FILE *fp, long offset,  int whence) {
+    if (fseek(fp, offset, whence))
         die("fseek: error\n");
 }
 
 DIR *
-xopendir(const char *name){
+xopendir(const char *name) {
     DIR *dp = opendir(name);
 
-    if(!dp)
+    if (!dp)
         die("xopendir: error opening %s\n", name);
 
     return dp;
 }
 
 void
-xclosedir(DIR *dirp){
-    if(!dirp)
+xclosedir(DIR *dirp) {
+    if (!dirp)
         die("xclosedir: null pointer\n");
-    if(closedir(dirp))
+    if (closedir(dirp))
         die("xclosedir: error\n");
 }
 
 void *
-xmalloc(size_t size){
+xmalloc(size_t size) {
     void *p = malloc(size);
 
-    if(!p)
+    if (!p)
         die("xmalloc: couldn't allocate %d bytes\n", size);
 
     return p;
@@ -95,7 +95,7 @@ xsnprintf(char *str, size_t size, const char *fmt, ...) {
 }
 
 bool
-isbigendian(void){
+isbigendian(void) {
     int value = 1;
 
     return *(char *)&value != 1;
@@ -107,27 +107,28 @@ isbigendian(void){
  * -1 % 10 == 9
  */
 int
-mod(int a, int b){
+mod(int a, int b) {
     int m = a % b;
 
     return m < 0 ? m + b : m;
 }
 
 inline void
-uint16swap(uint16_t *x){
+uint16swap(uint16_t *x) {
     *x = *x >> 8 | *x << 8;
 }
 
 inline void
-uint32swap(uint32_t *x){
-    *x = ((*x & (uint32_t) 0x000000FFU) << 24) |
-        ((*x & (uint32_t) 0x0000FF00U) <<  8) |
-        ((*x & (uint32_t) 0x00FF0000U) >>  8) |
-        ((*x & (uint32_t) 0xFF000000U) >> 24);
+uint32swap(uint32_t *x) {
+    *x = ((*x & 0x000000FFUL) << 24)
+       | ((*x & 0x0000FF00UL) <<  8)
+       | ((*x & 0x00FF0000UL) >>  8)
+       | ((*x & 0xFF000000UL) >> 24);
 }
 
 inline void
-int32swap(int32_t *x){
-    *x = ((*x << 8) & 0xFF00FF00) | ((*x >> 8) & 0xFF00FF);
+int32swap(int32_t *x) {
+    *x = ((*x << 8) & 0xFF00FF00)
+       | ((*x >> 8) & 0x00FF00FF);
     *x = (*x << 16) | ((*x >> 16) & 0xFFFF);
 }
