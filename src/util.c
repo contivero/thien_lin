@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <errno.h>
 
 #include "util.h"
 
@@ -79,7 +81,7 @@ xmalloc(size_t size) {
     return p;
 }
 
-int
+size_t
 xsnprintf(char *str, size_t size, const char *fmt, ...) {
     va_list ap;
 
@@ -131,4 +133,24 @@ int32swap(int32_t *x) {
     *x = ((*x << 8) & 0xFF00FF00)
        | ((*x >> 8) & 0x00FF00FF);
     *x = (*x << 16) | ((*x >> 16) & 0xFFFF);
+}
+
+/* strtol wrapper that exits if an error occurred */
+long int
+xstrtol(const char *nptr, char **end, int base){
+    const long sl = strtol(nptr, end, 10);
+
+    if (*end == nptr) {
+        die("%s: not a decimal number\n", nptr);
+    } else if ('\0' != **end) {
+        die("%s: characters remaining at the end of input: %s\n", nptr, *end);
+    } else if ((LONG_MIN == sl || LONG_MAX == sl) && ERANGE == errno) {
+        die("%s does not fit into a 'long'\n", nptr);
+    } else if (sl > INT_MAX) {
+        die("%ld greater than INT_MAX\n", sl);
+    } else if (sl < INT_MIN) {
+        die("%ld less than INT_MIN\n", sl);
+    }
+
+    return sl;
 }

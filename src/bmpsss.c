@@ -53,7 +53,7 @@ typedef struct {
     uint8_t   *imgpixels;            /* array of bytes representing each pixel */
 } Bitmap;
 
-typedef bool (*validating_fn)(FILE *, uint16_t, uint32_t);
+typedef bool (*fn)(FILE *, uint16_t, uint32_t);
 /* prototypes */
 static long     randint(long max);
 static void     swap(uint8_t *s, uint8_t *t);
@@ -77,7 +77,7 @@ static Bitmap   *bmpfromfile(const char *filename);
 static bool     isvalidbmpsize(FILE *fp, uint16_t k, uint32_t secretsize);
 static bool     kdivisiblesize(FILE *fp, uint16_t k);
 static void     bmptofile(const Bitmap *bp, const char *filename);
-static void     findclosestpair(uint32_t value, uint32_t *w, int32_t *h);
+static void     findclosestpair(uint32_t x, uint32_t *width, int32_t *height);
 static Bitmap   *newshadow(uint32_t width, int32_t height, uint16_t seed, uint16_t shadownumber);
 static Bitmap   **formshadows(const Bitmap *bp, uint16_t k, uint16_t n, uint16_t seed);
 static void     findcoefficients(int **mat, uint16_t k);
@@ -85,9 +85,9 @@ static Bitmap   *revealsecret(Bitmap **shadows, uint32_t width, int32_t height, 
 static void     hideshadow(Bitmap *bp, const Bitmap *shadow);
 static Bitmap   *retrieveshadow(const Bitmap *bp, uint32_t width, int32_t height, uint16_t k);
 static bool     isbmp(FILE *fp);
-static bool     isvalidshadow(FILE *fp, uint16_t k, uint32_t size);
-static bool     isvalidbmp(FILE *fp, uint16_t k, uint32_t ignored);
-static char     **getvalidfilenames(const char *dir, uint16_t k, uint16_t n, validating_fn f, uint32_t);
+static bool     isvalidshadow(FILE *fp, uint16_t k, uint32_t secretsize);
+static bool     isvalidbmp(FILE *fp, uint16_t k, uint32_t ignoredparameter);
+static char     **getvalidfilenames(const char *dir, uint16_t k, uint16_t n, fn isvalid, uint32_t size);
 static char     **getbmpfilenames(const char *dir, uint16_t k, uint16_t n, uint32_t size);
 static char     **getshadowfilenames(const char *dir, uint16_t k, uint32_t size);
 static void     distributeimage(const char *dir, const char *imgpath, uint16_t k, uint16_t n, uint16_t seed);
@@ -99,7 +99,7 @@ static void     unpermutepixels(Bitmap *bp, uint16_t seed);
 static uint8_t  generatepixel(const uint8_t *coeff, uint16_t degree, uint16_t value);
 
 /* globals */
-static char          *argv0;           /* program name for usage() */
+static const char    *argv0;           /* program name for usage() */
 static const uint8_t modinv[PRIME] = { /* modular multiplicative inverse */
     0, 1, 126, 84, 63, 201, 42, 36, 157, 28, 226, 137, 21, 58, 18, 67, 204,
     192, 14, 185, 113, 12, 194, 131, 136, 241, 29, 93, 9, 26, 159, 81, 102,
@@ -125,9 +125,10 @@ countfiles(const char *dirname) {
     int filecount = 0;
     DIR *dp = xopendir(dirname);
 
-    while ((d = readdir(dp)))
+    while ((d = readdir(dp))) {
         if (d->d_type == DT_REG) /* If the entry is a regular file */
             filecount++;
+    }
     xclosedir(dp);
 
     return filecount;
@@ -395,7 +396,7 @@ bmptofile(const Bitmap *bp, const char *filename) {
  * Used to make the shadows as 'squared' as possible */
 void
 findclosestpair(uint32_t x, uint32_t *width, int32_t *height) {
-    int y = floor(sqrt(x));
+    unsigned int y = floor(sqrt(x));
 
     for (; y > 2; y--)
         if (x % y == 0) {
@@ -442,7 +443,7 @@ findcoefficients(int **mat, uint16_t k) {
         for (size_t i = k-1; i > j; i--) {
             int a = mat[i][j] * modinv[mat[i-1][j]];
             for (size_t t = j; t < k+1; t++) {
-                int temp  = mat[i][t] - ((mat[i-1][t] * a) % PRIME);
+                int temp = mat[i][t] - ((mat[i-1][t] * a) % PRIME);
                 mat[i][t] = mod(temp, PRIME);
             }
         }
@@ -453,7 +454,7 @@ findcoefficients(int **mat, uint16_t k) {
         mat[i][k] = (mat[i][k] * modinv[mat[i][i]]) % PRIME;
         mat[i][i] = (mat[i][i] * modinv[mat[i][i]]) % PRIME;
         for (int t = i-1; t >= 0; t--) {
-            int temp  = mat[t][k] - ((mat[i][k] * mat[t][i]) % PRIME);
+            int temp = mat[t][k] - ((mat[i][k] * mat[t][i]) % PRIME);
             mat[t][k] = mod(temp, PRIME);
             mat[t][i] = 0;
         }
@@ -574,7 +575,7 @@ isvalidbmp(FILE *fp, uint16_t k, uint32_t ignoredparameter) {
 }
 
 char **
-getvalidfilenames(const char *dir, uint16_t k, uint16_t n, validating_fn isvalid, uint32_t size) {
+getvalidfilenames(const char *dir, uint16_t k, uint16_t n, fn isvalid, uint32_t size) {
     struct dirent *d;
     FILE *fp;
     DIR *dp = xopendir(dir);
@@ -584,10 +585,10 @@ getvalidfilenames(const char *dir, uint16_t k, uint16_t n, validating_fn isvalid
 
     while ((d = readdir(dp)) && i < n) {
         if (d->d_type == DT_REG) {
-            int len = xsnprintf(filepath, PATH_MAX, "%.*s/%.*s", DIR_MAX, dir, NAME_MAX, d->d_name);
+            size_t len = xsnprintf(filepath, PATH_MAX, "%.*s/%.*s", DIR_MAX, dir, NAME_MAX, d->d_name);
             fp = xfopen(filepath, "r");
             if (isvalid(fp, k, size)) {
-                filenames[i] = xmalloc(len + 1);
+                filenames[i] = xmalloc(len + 1UL);
                 strncpy(filenames[i], filepath, len);
                 filenames[i][len] = '\0'; /* NULL terminate string */
                 i++;
@@ -714,8 +715,6 @@ generatepixel(const uint8_t *coeff, uint16_t degree, uint16_t value) {
 
 int
 main(int argc, char *argv[argc + 1]) {
-    char *filename  = 0;
-    char *dir       = "./";
     bool dflag      = 0;
     bool rflag      = 0;
     bool kflag      = 0;
@@ -728,6 +727,9 @@ main(int argc, char *argv[argc + 1]) {
     uint16_t n      = 0;
     uint32_t width  = 0;
     int32_t height  = 0;
+    char *filename  = 0;
+    char *dir       = "./";
+    char *endptr;
 
     argv0 = argv[0]; /* save program name for usage() */
 
@@ -746,34 +748,54 @@ main(int argc, char *argv[argc + 1]) {
         } else if (strcmp(argv[i], "-k") == 0) {
             kflag = 1;
             if (i + 1 < argc) {
-                k = atoi(argv[++i]);
+                long int l = xstrtol(argv[++i], &endptr, 10);
+                if (l <= UINT16_MAX)
+                    k = l;
+                else
+                    die("k must be 2 <= k <= %d; was %d", UINT16_MAX, l);
             } else {
                 usage();
             }
         } else if (strcmp(argv[i], "-w") == 0) {
             wflag = 1;
             if (i + 1 < argc) {
-                width = atoi(argv[++i]);
+                long int l = xstrtol(argv[++i], &endptr, 10);
+                if (l <= UINT32_MAX)
+                    width = l;
+                else
+                    die("width must be less or equal to %d; was %d", UINT32_MAX, l);
             } else {
                 usage();
             }
         } else if (strcmp(argv[i], "-h") == 0) {
             hflag = 1;
             if (i + 1 < argc) {
-                height = atoi(argv[++i]);
+                long int l = xstrtol(argv[++i], &endptr, 10);
+                if (INT32_MIN <= l && l <= INT32_MAX)
+                    height = l;
+                else
+                    die("height must be %d <= height <= %d; was %d", INT32_MIN, INT32_MAX, l);
             } else {
                 usage();
             }
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 < argc) {
-                seed = atoi(argv[++i]);
+                long int l = xstrtol(argv[++i], &endptr, 10);
+                if (l <= UINT16_MAX)
+                    seed = l;
+                else
+                    die("seed must be less or equal to %d; was %d", UINT16_MAX, l);
             } else {
                 usage();
             }
         } else if (strcmp(argv[i], "-n") == 0) {
             nflag = 1;
             if (i + 1 < argc) {
-                n = atoi(argv[++i]);
+                long int l = xstrtol(argv[++i], &endptr, 10);
+                if (l <= UINT16_MAX)
+                    n = l;
+                else
+                    die("n must be 2 <= n <= 65535; was %d", l);
             } else {
                 usage();
             }
